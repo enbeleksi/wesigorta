@@ -39,6 +39,23 @@
 //     2. adım). Bu bildirim+teşekkür SADECE o teklif kaydından sonraki İLK
 //     mesajda gönderilir (web_teklifler.yanit_bildirildi_mi sütunuyla takip
 //     edilir) - müşteri sonrasında kaç kez yazarsa yazsın tekrarlanmaz.
+//
+// 25.07.2026 eklemeleri (bir web teklifi bildirimi ekibe ULAŞMADIĞI için):
+//   - KÖK NEDEN: mesajGonder/sablonGonder, fetch()'in HTTP hata kodlarında
+//     (4xx/5xx) reject ETMEDİĞİNİ hesaba katmıyordu - WhatsApp API'nin
+//     döndürdüğü gerçek hatalar (24 saatlik pencere kapalı vb.) hiçbir
+//     try/catch tarafından yakalanmıyor, konsola bile düşmüyordu. Artık
+//     yanitiKontrolEt ile response.ok kontrol ediliyor ve hata varsa
+//     düzgün bir Error fırlatılıyor.
+//   - EKİP BİLDİRİMİ ARTIK ŞABLON-YEDEKLİ: TEKLIF_EKIP_TEMPLATE_NAME
+//     tanımlıysa, ekibe (NOTIFY_NUMBER + danışman) giden bildirim önce bu
+//     şablonla denenir (24 saatlik pencereye tabi değildir, ekip üyesi bot'a
+//     hiç yazmamış olsa bile ulaşır); başarısız olursa/ayarlanmamışsa düz
+//     metne düşer. Şablonun BODY'sinde {{musteri_adi}} ve {{telefon}}
+//     adlarında iki değişken olmalı. Bu ŞABLON HEM "yeni web teklifi" HEM
+//     "web teklif müşterisi yazdı" bildirimleri için ORTAK kullanılıyor (iki
+//     ayrı şablon onaylatma zahmetinden kaçınmak için) - o yüzden metni
+//     kasıtlı olarak GENEL tutun (bkz. .env.example'daki örnek).
 // =====================================================================
 
 module.exports = function (app, pool) {
@@ -74,11 +91,30 @@ module.exports = function (app, pool) {
     return d.length >= 10 ? d.slice(-10) : null;
   }
 
+  // fetch() HTTP hata kodlarinda (4xx/5xx) PROMISE'i REJECT ETMEZ - sadece
+  // gercek network hatalarinda (DNS, baglanti kopmasi vb.) eder. Bu yuzden
+  // WhatsApp API'nin dondurdugu gercek hatalar (24 saatlik pencere kapali,
+  // yanlis sablon param adi, gecersiz numara vb.) response.ok kontrolu
+  // yapilmadan TAMAMEN SESSIZ kayboluyordu - cagiran taraftaki try/catch bile
+  // bunu yakalamiyordu (25.07.2026 tarihli "ekip bildirimi gitmedi" vakasi -
+  // muhtemelen 24 saatlik pencere kapaliydi ama hata hicbir yere loglanmadi).
+  // Artik response.ok false ise govdeyi okuyup bir Error firlatiyoruz ki
+  // gercek hata hem konsola dussun hem de asagidaki sablon-yedegi devreye
+  // girebilsin.
+  async function yanitiKontrolEt(response) {
+    if (!response.ok) {
+      let govde = '';
+      try { govde = await response.text(); } catch (e) { /* yoksay */ }
+      throw new Error('HTTP ' + response.status + ': ' + govde);
+    }
+    return response;
+  }
+
   // Metin (düz) bir WhatsApp mesajı gönderen küçük ortak yardımcı - hem asıl
   // /api/teklif bildirimi hem de aşağıdaki musteriYazdiBildir tarafından
   // paylaşılıyor.
   async function mesajGonder(numara, metin) {
-    return fetch(
+    const response = await fetch(
       'https://graph.facebook.com/v19.0/' + process.env.WHATSAPP_PHONE_NUMBER_ID + '/messages',
       {
         method: 'POST',
@@ -94,6 +130,7 @@ module.exports = function (app, pool) {
         })
       }
     );
+    return yanitiKontrolEt(response);
   }
 
   // ADLANDIRILMIŞ (named) parametreli, ONAYLI bir şablonla mesaj gönderir -
@@ -105,7 +142,7 @@ module.exports = function (app, pool) {
   // değişkenleri istiyor - orn. {{musteri_adi}} - o yüzden her parametrede
   // "parameter_name" alanı da gönderiliyor, sadece sıralı bir dizi değil).
   async function sablonGonder(numara, sablonAdi, parametreler) {
-    return fetch(
+    const response = await fetch(
       'https://graph.facebook.com/v19.0/' + process.env.WHATSAPP_PHONE_NUMBER_ID + '/messages',
       {
         method: 'POST',
@@ -134,6 +171,36 @@ module.exports = function (app, pool) {
         })
       }
     );
+    return yanitiKontrolEt(response);
+  }
+
+  // Ekibe (NOTIFY_NUMBER + varsa danışman) giden bildirimleri TEK bir yerden
+  // yönetir - iki hem /api/teklif hem musteriYazdiBildir tarafından
+  // kullanılır (25.07.2026 eklemesi). conversationEngine.js'teki
+  // bildirimGonder ile AYNI desen: önce (varsa) TEKLIF_EKIP_TEMPLATE_NAME
+  // şablonunu dener - şablon mesajları 24 saatlik müşteri-hizmeti
+  // penceresine TABİ DEĞİLDİR, karşı taraf (ekip üyesi) bu numaraya hiç
+  // yazmamış olsa bile ulaşır. Şablon başarılı olursa BURADA DURULUR (aynı
+  // bilgiyi iki kez göndermemek için). Şablon başarısız olursa/ayarlanmamışsa
+  // düz metne düşer - bu SADECE pencere açıksa (ekip üyesi son 24 saatte
+  // bot'a yazdıysa) çalışır. Her iki adım da başarısız olursa hata konsola
+  // düşer (bkz. yukarıda yanitiKontrolEt - artık HTTP hataları sessizce
+  // kaybolmuyor).
+  async function ekibeBildirGonder(numara, duzMetin, sablonParametreler) {
+    const sablonAdi = process.env.TEKLIF_EKIP_TEMPLATE_NAME;
+    if (sablonAdi) {
+      try {
+        await sablonGonder(numara, sablonAdi, sablonParametreler);
+        return; // basarili - sablon zaten yeterli bilgiyi iletti
+      } catch (e) {
+        console.error('Ekip şablon bildirimi gönderilemedi (' + numara + '):', e.message);
+      }
+    }
+    try {
+      await mesajGonder(numara, duzMetin);
+    } catch (e) {
+      console.error('Teklif bildirimi gönderilemedi (' + numara + '):', e.message);
+    }
   }
 
   // Tabloyu (ve sonradan eklenen sütunları) idempotent şekilde hazırlar -
@@ -207,11 +274,7 @@ module.exports = function (app, pool) {
         if (numara) alicilar.add(numara);
       }
       for (const numara of alicilar) {
-        try {
-          await mesajGonder(numara, mesaj);
-        } catch (e) {
-          console.error('Teklif bildirimi gönderilemedi (' + numara + '):', e.message);
-        }
+        await ekibeBildirGonder(numara, mesaj, { musteri_adi: b.ad, telefon: b.telefon });
       }
 
       // --- 3) Müşteriye onaylı şablonla bilgilendirme ---
@@ -306,8 +369,13 @@ module.exports = function (app, pool) {
   // olur, müşteri sonrasında kaç kez yazarsa yazsın bir daha tekrarlanmaz).
   // Eşleşme yoksa (ya da zaten daha önce bildirilmişse) hiçbir şey yapmaz.
   // Müşteri bu numaraya AZ ÖNCE kendisi yazdığı için (24 saatlik oturum
-  // penceresi içi), hem ekibe hem müşteriye giden mesajlar düz metin olarak
-  // gönderilebiliyor - şablona gerek yok. Eşleşme bulunup bulunmadığını
+  // penceresi içi), müşteriye giden teşekkür mesajı düz metin olarak
+  // gönderilebiliyor. FAKAT bu, ekibe (NOTIFY_NUMBER/danışman) giden
+  // bildirim için GEÇERLİ DEĞİL - müşterinin bot'a yazmış olması, ekip
+  // üyelerinin KENDİ numaralarının penceresini AÇMAZ (bunlar ayrı, birbirinden
+  // bağımsız numaralar) - o yüzden ekip bildirimi de /api/teklif'teki gibi
+  // ekibeBildirGonder (şablon-yedekli) üzerinden gönderiliyor (25.07.2026
+  // düzeltmesi - önceki yorum bunu yanlış varsayıyordu). Eşleşme bulunup bulunmadığını
   // (true/false) döner ki index.js isterse loglayabilsin; normal mesaj
   // akışını index.js HER DURUMDA kendisi devam ettirmeli, bu fonksiyon akışı
   // durdurmaz/engellemez.
@@ -322,11 +390,7 @@ module.exports = function (app, pool) {
 
     const bildirimMetni = `🔔 Web teklif müşterisi yazdı: ${kayit.ad} ${kayit.telefon} — aranmak istiyor`;
     for (const numara of alicilar) {
-      try {
-        await mesajGonder(numara, bildirimMetni);
-      } catch (e) {
-        console.error('Müşteri yazdı bildirimi gönderilemedi (' + numara + '):', e.message);
-      }
+      await ekibeBildirGonder(numara, bildirimMetni, { musteri_adi: kayit.ad, telefon: kayit.telefon });
     }
 
     const musteriNumarasi = telefonUluslararasiFormata(telefonHam);
