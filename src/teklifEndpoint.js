@@ -11,9 +11,18 @@
 //   3) Railway ortam değişkenlerine ekleyin:
 //        TEKLIF_SECRET                = wesigorta-teklif-2026   (HTML'dekiyle AYNI olmalı)
 //        NOTIFY_NUMBER                = 905326876126            (bildirim gidecek numara, 90 ile)
-//        TEKLIF_MUSTERI_TEMPLATE_NAME = (Meta'da onaylı, "ad" ve "danisman"
-//                                        parametreli bir şablonun adı - bkz.
-//                                        aşağıdaki 2. adım. Tanımlı değilse bu
+//        TEKLIF_MUSTERI_TEMPLATE_NAME = (Meta'da onaylı bir şablonun adı - bu
+//                                        şablonun BODY'sinde tam olarak
+//                                        {{musteri_adi}} ve {{danisman_adi}}
+//                                        adlarında (Meta artık {{1}}/{{2}}
+//                                        değil, küçük harf+alt çizgili
+//                                        ADLANDIRILMIŞ değişken istiyor) iki
+//                                        değişken olmalı. Örnek metin: "Merhaba
+//                                        {{musteri_adi}}, WE Sigorta'ya
+//                                        iletmiş olduğunuz teklif talebiniz
+//                                        alınmıştır. Danışmanımız
+//                                        {{danisman_adi}} en kısa sürede sizi
+//                                        arayacaktır." Tanımlı değilse bu
 //                                        bilgilendirme sessizce atlanır.)
 //      (WHATSAPP_TOKEN ve WHATSAPP_PHONE_NUMBER_ID zaten mevcut.)
 //   4) Deploy edin. Tablo ilk istekte otomatik oluşur.
@@ -27,7 +36,9 @@
 //     hem ekibe (NOTIFY_NUMBER + ilgili danışman) bir bildirim hem de
 //     müşteriye kısa bir teşekkür mesajı gönderiliyor - bu kontrolü index.js
 //     tarafında webhook handler'ının içine eklemeniz gerekiyor (bkz. yukarıda
-//     2. adım).
+//     2. adım). Bu bildirim+teşekkür SADECE o teklif kaydından sonraki İLK
+//     mesajda gönderilir (web_teklifler.yanit_bildirildi_mi sütunuyla takip
+//     edilir) - müşteri sonrasında kaç kez yazarsa yazsın tekrarlanmaz.
 // =====================================================================
 
 module.exports = function (app, pool) {
@@ -85,9 +96,14 @@ module.exports = function (app, pool) {
     );
   }
 
-  // "ad"/"danisman" parametreli, ONAYLI bir şablonla mesaj gönderir (müşteri
-  // henüz bize hiç yazmadığı için 24 saatlik oturum penceresi dışındayız -
-  // düz metin GÖNDERİLEMEZ, Meta'nın onayladığı bir şablon şart).
+  // ADLANDIRILMIŞ (named) parametreli, ONAYLI bir şablonla mesaj gönderir -
+  // müşteri henüz bize hiç yazmadığı için 24 saatlik oturum penceresi
+  // dışındayız, düz metin GÖNDERİLEMEZ, Meta'nın onayladığı bir şablon şart.
+  // "parametreler" bir NESNE olmalı, anahtarları şablondaki {{degisken_adi}}
+  // isimleriyle BİREBİR aynı olmalı (24.07.2026: Meta artık eski {{1}}/{{2}}
+  // pozisyonel formatını değil, küçük harf + alt çizgili adlandırılmış
+  // değişkenleri istiyor - orn. {{musteri_adi}} - o yüzden her parametrede
+  // "parameter_name" alanı da gönderiliyor, sadece sıralı bir dizi değil).
   async function sablonGonder(numara, sablonAdi, parametreler) {
     return fetch(
       'https://graph.facebook.com/v19.0/' + process.env.WHATSAPP_PHONE_NUMBER_ID + '/messages',
@@ -107,13 +123,42 @@ module.exports = function (app, pool) {
             components: [
               {
                 type: 'body',
-                parameters: parametreler.map((deger) => ({ type: 'text', text: String(deger) }))
+                parameters: Object.keys(parametreler).map((ad) => ({
+                  type: 'text',
+                  parameter_name: ad,
+                  text: String(parametreler[ad])
+                }))
               }
             ]
           }
         })
       }
     );
+  }
+
+  // Tabloyu (ve sonradan eklenen sütunları) idempotent şekilde hazırlar -
+  // hem /api/teklif hem de musteriYazdiBildir (webhook tarafı) çağırmadan
+  // önce bunu bekliyor, böylece ikisinden hangisi önce çalışırsa çalışsın
+  // tablo/sütun eksikliğinden hata almazlar. ADD COLUMN IF NOT EXISTS,
+  // Railway'deki MEVCUT prod tablosuna da (veri kaybı olmadan) güvenle
+  // uygulanabiliyor.
+  async function tabloyuHazirla() {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS web_teklifler (
+        id SERIAL PRIMARY KEY,
+        tarih TIMESTAMPTZ DEFAULT NOW(),
+        ad TEXT, telefon TEXT, kisi_tipi TEXT,
+        gelir_aylik_tl INTEGER, odeme_donemi TEXT,
+        prim_usd INTEGER, prim_tl INTEGER, paket TEXT,
+        teminat_usd INTEGER, yas INTEGER, cinsiyet TEXT,
+        aylik_tasarruf_tl INTEGER, yillik_tasarruf_tl INTEGER,
+        danisman TEXT, kur NUMERIC, kaynak TEXT
+      )`);
+    // 24.07.2026 eklemesi: musteri, teklif talebinden sonra WhatsApp'a
+    // yazdiginda bildirim+tesekkurun SADECE ILK seferde gitmesi icin.
+    await pool.query(`
+      ALTER TABLE web_teklifler
+      ADD COLUMN IF NOT EXISTS yanit_bildirildi_mi BOOLEAN DEFAULT FALSE`);
   }
 
   app.options('/api/teklif', (req, res) => { cors(req, res); res.sendStatus(204); });
@@ -128,17 +173,7 @@ module.exports = function (app, pool) {
       if (!b.ad || !b.telefon) return res.status(400).json({ ok: false });
 
       // --- 1) Veritabanına kaydet ---
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS web_teklifler (
-          id SERIAL PRIMARY KEY,
-          tarih TIMESTAMPTZ DEFAULT NOW(),
-          ad TEXT, telefon TEXT, kisi_tipi TEXT,
-          gelir_aylik_tl INTEGER, odeme_donemi TEXT,
-          prim_usd INTEGER, prim_tl INTEGER, paket TEXT,
-          teminat_usd INTEGER, yas INTEGER, cinsiyet TEXT,
-          aylik_tasarruf_tl INTEGER, yillik_tasarruf_tl INTEGER,
-          danisman TEXT, kur NUMERIC, kaynak TEXT
-        )`);
+      await tabloyuHazirla();
       await pool.query(
         `INSERT INTO web_teklifler
          (ad, telefon, kisi_tipi, gelir_aylik_tl, odeme_donemi, prim_usd, prim_tl,
@@ -184,13 +219,19 @@ module.exports = function (app, pool) {
       // musteri-hizmeti penceresi dışı) - o yüzden düz metin değil, Meta'nın
       // onayladığı bir şablon kullanılıyor. TEKLIF_MUSTERI_TEMPLATE_NAME
       // tanımlı değilse bu adım sessizce atlanır, /api/teklif akışı bundan
-      // etkilenmez.
+      // etkilenmez. Şablonun BODY'sinde {{musteri_adi}} ve {{danisman_adi}}
+      // adlarında (aşağıdaki nesnenin anahtarlarıyla BİREBİR aynı) iki
+      // değişken olmalı - Meta artık adlandırılmış değişken istiyor, isim
+      // uyuşmazsa gönderim hata verir (bkz. yukarıda sablonGonder).
       const musteriSablonAdi = process.env.TEKLIF_MUSTERI_TEMPLATE_NAME;
       if (musteriSablonAdi) {
         const musteriNumarasi = telefonUluslararasiFormata(b.telefon);
         if (musteriNumarasi) {
           try {
-            await sablonGonder(musteriNumarasi, musteriSablonAdi, [b.ad, b.danisman || 'ekibimiz']);
+            await sablonGonder(musteriNumarasi, musteriSablonAdi, {
+              musteri_adi: b.ad,
+              danisman_adi: b.danisman || 'ekibimiz'
+            });
           } catch (e) {
             console.error('Müşteriye onay şablonu gönderilemedi (' + musteriNumarasi + '):', e.message);
           }
@@ -229,17 +270,21 @@ module.exports = function (app, pool) {
   }
 
   // Son 30 gün içinde, verilen (ham, herhangi bir formatta) telefon numarasına
-  // ait bir web_teklifler kaydı olup olmadığını arar - varsa EN GÜNCEL
-  // kaydı döner, yoksa null. Numaraları karşılaştırırken baştaki 0/90 farkını
-  // gözetmemek için ikisi de "son 10 hane"ye indirgeniyor (bkz. yukarıda
-  // telefonSon10Hane).
+  // ait, HENÜZ bildirilmemiş (yanit_bildirildi_mi = false) bir web_teklifler
+  // kaydı olup olmadığını arar - varsa EN GÜNCEL kaydı döner, yoksa null.
+  // Numaraları karşılaştırırken baştaki 0/90 farkını gözetmemek için ikisi de
+  // "son 10 hane"ye indirgeniyor (bkz. yukarıda telefonSon10Hane). Zaten
+  // bildirilmiş kayıtlar burada DÖNMEZ - böylece musteriYazdiBildir doğal
+  // olarak sadece o kayıt için İLK mesajda bir sonuç bulur.
   async function sonTeklifiBul(telefonHam) {
     const hedef10 = telefonSon10Hane(telefonHam);
     if (!hedef10) return null;
     try {
+      await tabloyuHazirla();
       const { rows } = await pool.query(
-        `SELECT ad, telefon, danisman, tarih FROM web_teklifler
+        `SELECT id, ad, telefon, danisman, tarih FROM web_teklifler
          WHERE tarih >= NOW() - INTERVAL '30 days'
+           AND yanit_bildirildi_mi IS NOT TRUE
            AND RIGHT(regexp_replace(telefon, '[^0-9]', '', 'g'), 10) = $1
          ORDER BY tarih DESC
          LIMIT 1`,
@@ -253,15 +298,19 @@ module.exports = function (app, pool) {
   }
 
   // Webhook'a (WhatsApp'a doğrudan) bir mesaj geldiğinde, index.js tarafından
-  // çağrılması beklenen fonksiyon: gönderen numara son 30 gün içindeki bir
-  // web_teklifler kaydıyla eşleşiyorsa, hem ekibe (NOTIFY_NUMBER + varsa
-  // ilgili danışman) bir bildirim hem de müşteriye kısa bir teşekkür mesajı
-  // gönderir; eşleşme yoksa hiçbir şey yapmaz. Müşteri bu numaraya AZ ÖNCE
-  // kendisi yazdığı için (24 saatlik oturum penceresi içi), hem ekibe hem
-  // müşteriye giden mesajlar düz metin olarak gönderilebiliyor - şablona
-  // gerek yok. Eşleşme bulunup bulunmadığını (true/false) döner ki index.js
-  // isterse loglayabilsin; normal mesaj akışını index.js HER DURUMDA kendisi
-  // devam ettirmeli, bu fonksiyon akışı durdurmaz/engellemez.
+  // çağrılması beklenen fonksiyon: gönderen numara son 30 gün içindeki, henüz
+  // bildirilmemiş bir web_teklifler kaydıyla eşleşiyorsa, hem ekibe
+  // (NOTIFY_NUMBER + varsa ilgili danışman) bir bildirim hem de müşteriye
+  // kısa bir teşekkür mesajı gönderir, sonra o kaydı "bildirildi" olarak
+  // işaretler (24.07.2026 kararı - bu SADECE o kayıttan sonraki İLK mesajda
+  // olur, müşteri sonrasında kaç kez yazarsa yazsın bir daha tekrarlanmaz).
+  // Eşleşme yoksa (ya da zaten daha önce bildirilmişse) hiçbir şey yapmaz.
+  // Müşteri bu numaraya AZ ÖNCE kendisi yazdığı için (24 saatlik oturum
+  // penceresi içi), hem ekibe hem müşteriye giden mesajlar düz metin olarak
+  // gönderilebiliyor - şablona gerek yok. Eşleşme bulunup bulunmadığını
+  // (true/false) döner ki index.js isterse loglayabilsin; normal mesaj
+  // akışını index.js HER DURUMDA kendisi devam ettirmeli, bu fonksiyon akışı
+  // durdurmaz/engellemez.
   async function musteriYazdiBildir(telefonHam) {
     const kayit = await sonTeklifiBul(telefonHam);
     if (!kayit) return false;
@@ -290,6 +339,16 @@ module.exports = function (app, pool) {
       } catch (e) {
         console.error('Müşteriye teşekkür mesajı gönderilemedi (' + musteriNumarasi + '):', e.message);
       }
+    }
+
+    // Bu kaydı "bildirildi" olarak işaretliyoruz ki AYNI müşteri sonraki
+    // mesajlarında (hâlâ 30 günlük pencere içinde olsa bile) tekrar bu
+    // bildirim+teşekkür akışını tetiklemesin - sonTeklifiBul artık bu
+    // kaydı döndürmeyecek.
+    try {
+      await pool.query('UPDATE web_teklifler SET yanit_bildirildi_mi = TRUE WHERE id = $1', [kayit.id]);
+    } catch (e) {
+      console.error('web_teklifler "bildirildi" olarak işaretlenemedi (id=' + kayit.id + '):', e.message);
     }
 
     return true;

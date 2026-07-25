@@ -550,6 +550,48 @@ app.get("/api/panel/sablon-detay/:id", panelAuth, async (req, res) => {
   }
 });
 
+// --- Bir kerelik kurulum: WhatsApp Yöneticisi'nde onaylanan YENİ bir görünen
+// ad ("WE Sigorta Customer Care" - 25.07.2026), numara "kaydedilene" (Cloud
+// API "register" ucu çağrılana) kadar aktif olmuyor - WhatsApp Yöneticisi
+// arayüzünde bu işlem için tıklanacak bir buton yok, sadece Graph API
+// üzerinden yapılabiliyor. Bu route, o çağrıyı bizim sunucumuz üzerinden
+// (zaten Railway'de tanımlı WHATSAPP_TOKEN/WHATSAPP_PHONE_NUMBER_ID ile)
+// yapıyor - böylece hiç kimse token'ı elle kopyalamak/terminal açmak zorunda
+// kalmıyor, sadece panel şifresiyle giriş yapıp numaranın 2 Adımlı Doğrulama
+// PIN'ini yazması yeterli. Kullanildiktan sonra bu route silinebilir.
+app.get("/api/panel/whatsapp-numara-kaydet", panelAuth, async (req, res) => {
+  const pin = (req.query.pin || "").trim();
+  if (!/^\d{6}$/.test(pin)) {
+    return res.status(400).send(
+      '<div style="font-family:sans-serif; padding:20px;">' +
+        "Numaranın 2 Adımlı Doğrulama PIN'ini (6 haneli) ?pin= ile birlikte yazmanız gerekiyor.<br><br>" +
+        `Örnek: <code>${req.path}?pin=123456</code></div>`
+    );
+  }
+  try {
+    const response = await fetch(
+      `https://graph.facebook.com/v20.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/register`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ messaging_product: "whatsapp", pin })
+      }
+    );
+    const sonuc = await response.json();
+    res.send(
+      `<pre style="font-family:monospace; padding:20px;">${response.ok ? "✅" : "❌"} ${JSON.stringify(sonuc, null, 2)}</pre>`
+    );
+  } catch (err) {
+    console.error("WhatsApp numara kaydi hatasi:", err.message);
+    res.status(500).send(
+      `<pre style="font-family:monospace; padding:20px; color:#c00;">❌ Hata:\n\n${err.message}</pre>`
+    );
+  }
+});
+
 app.get("/panel", panelAuth, (req, res) => {
   res.sendFile(path.join(__dirname, "panel.html"));
 });
