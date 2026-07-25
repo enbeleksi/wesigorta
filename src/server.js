@@ -818,6 +818,26 @@ app.post("/webhook", async (req, res) => {
 
     const from = message.from; // musterinin telefon numarasi
 
+    // Web hesaplayicidan teklif isteyip PDF indiren bir musteri, daha sonra
+    // (30 gun icinde) dogrudan WhatsApp'a yazarsa - ekibe (NOTIFY_NUMBER +
+    // ilgili danisman) bir bildirim ve musteriye kisa bir tesekkur mesaji
+    // gonderiyoruz (24.07.2026 geri bildirimi). Musteri ayni kayittan sonra
+    // birden fazla mesaj yazsa bile HER mesajinda tekrar bildirim/tesekkur
+    // gonderilmesi ISTENDI (bkz. ilgili karar). Danisman numaralari icin bu
+    // kontrolu atliyoruz - web_teklifler tablosunda zaten musteri numaralari
+    // tutuluyor, bir danismanin kendi numarasiyla yanlislikla eslesmesi
+    // beklenmez ama yine de guvenlik icin haric tutuyoruz. Bu kontrol normal
+    // mesaj akisini ASLA durdurmuyor/engellemiyor - hata olsa bile (bkz.
+    // try/catch) asagidaki isDanisman/handleIncoming akisi normal sekilde
+    // devam eder.
+    if (!advisorEngine.isDanisman(from)) {
+      try {
+        await teklifYardimcilari.musteriYazdiBildir(from);
+      } catch (err) {
+        console.error("Web teklif yanit kontrolu basarisiz:", err.message);
+      }
+    }
+
     let parsed;
     if (message.type === "text") {
       parsed = { type: "text", text: message.text.body };
@@ -1023,5 +1043,7 @@ async function baslat() {
 
 baslat();
 
-// Web hesaplayici teklif bildirimleri
-require('./teklifEndpoint')(app);
+// Web hesaplayici teklif bildirimleri - donen nesne, webhook'a yazan bir
+// numaranin daha once web'den teklif isteyip istemedigini kontrol etmek
+// icin asagida (app.post("/webhook", ...)) kullaniliyor.
+const teklifYardimcilari = require('./teklifEndpoint')(app, db.pool);

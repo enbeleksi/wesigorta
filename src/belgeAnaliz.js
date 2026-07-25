@@ -86,4 +86,69 @@ async function belgeFotografiAnalizEt(buffer, mimeType, beklenenBelgeAciklamasi,
   };
 }
 
-module.exports = { belgeFotografiAnalizEt };
+// Kimligin ON ve ARKA yuzu fotograflarinin AYNI kisiye/karta ait olup
+// olmadigini kontrol eder (24.07.2026 geri bildirimi - "kimliğin arkasının ön
+// yüzdeki kimliğe ait olup olmadığını kontrol edelim farklı bir kimliğin arka
+// yüzünü kabul etmeyelim"). Iki fotografi TEK bir Anthropic Vision cagrisinda
+// karsilastirir - on yuzdeki ad/soyad/TC kimlik no ile arka yuzdeki seri no/
+// diger bilgilerin ayni fiziksel karta ait gorunup gorunmedigini degerlendirir.
+// ANTHROPIC_API_KEY tanimli degilse ya da API hata donerse hata firlatir;
+// cagiran taraf (advisorEngine.js) bu durumda kontrolu atlayip cifti normal
+// kabul ediyor - gecici bir API sorunu satis surecini durdurmasin.
+async function kimlikOnArkaTutarliMi(onBuffer, onMimeType, arkaBuffer, arkaMimeType) {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    throw new Error("ANTHROPIC_API_KEY tanimli degil - kimlik on/arka tutarlilik kontrolu devre disi.");
+  }
+
+  const onBase64 = onBuffer.toString("base64");
+  const arkaBase64 = arkaBuffer.toString("base64");
+
+  const response = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      model: "claude-sonnet-5",
+      max_tokens: 300,
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "Bu, bir T.C. kimlik kartının ÖN yüzü:" },
+            { type: "image", source: { type: "base64", media_type: onMimeType || "image/jpeg", data: onBase64 } },
+            { type: "text", text: "Bu da ARKA yüzü olduğu iddia edilen fotoğraf:" },
+            { type: "image", source: { type: "base64", media_type: arkaMimeType || "image/jpeg", data: arkaBase64 } },
+            {
+              type: "text",
+              text:
+                "Bu iki fotoğrafın AYNI fiziksel kimlik kartına/aynı kişiye ait olup olmadığını değerlendir " +
+                "(T.C. kimlik numarası, seri numarası, isim gibi görünen bilgileri karşılaştırarak). Emin " +
+                "olamıyorsan (orn. bir taraf okunaksızsa) tutarli kabul et (varsayilan true) - sadece BARIZ bir " +
+                "uyuşmazlık (farklı kimlik numarası/farklı görünen kart tasarımı gibi) varsa false dön.\n\n" +
+                "SADECE aşağıdaki JSON formatında cevap ver, başka hiçbir metin ekleme:\n" +
+                '{"tutarli_mi": true ya da false, "aciklama": "uyuşmazlık varsa kısa ve nazik bir açıklama (Türkçe), yoksa boş string"}'
+            }
+          ]
+        }
+      ]
+    })
+  });
+
+  const data = await response.json();
+  const metin = data?.content?.[0]?.text || "";
+  const jsonEslesme = metin.match(/\{[\s\S]*\}/);
+  if (!jsonEslesme) {
+    throw new Error("Kimlik on/arka tutarlilik analizi anlasilamadi: " + JSON.stringify(data));
+  }
+  const sonuc = JSON.parse(jsonEslesme[0]);
+  return {
+    tutarliMi: sonuc.tutarli_mi !== false,
+    aciklama: sonuc.aciklama || ""
+  };
+}
+
+module.exports = { belgeFotografiAnalizEt, kimlikOnArkaTutarliMi };

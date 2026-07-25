@@ -36,7 +36,7 @@ const {
 const flows = require("./flows");
 const conversationEngine = require("./conversationEngine");
 const { belgeleriTekPdfeBirlestir } = require("./pdfBirlestir");
-const { belgeFotografiAnalizEt } = require("./belgeAnaliz");
+const { belgeFotografiAnalizEt, kimlikOnArkaTutarliMi } = require("./belgeAnaliz");
 const { vefatTeminatiHesapla } = require("./vefatTeminatiHesapla");
 const { satisSozlesmesiAnalizEt } = require("./satisSozlesmesiAnaliz");
 const { BES_FONLARI, fonlariKategoriyeGoreGrupla } = require("./besFonVerileri");
@@ -88,7 +88,7 @@ const SAGLIK_BEYAN_SABLONU = {
 };
 
 async function sabitSablonlariGonder(from, urunTipi) {
-  const gonderilecekler = urunTipi === "bes_yeni_is" ? SABIT_SABLONLAR.filter((s) => !s.sadeceHayatta) : SABIT_SABLONLAR;
+  const gonderilecekler = besUrunTipiMi(urunTipi) ? SABIT_SABLONLAR.filter((s) => !s.sadeceHayatta) : SABIT_SABLONLAR;
   for (const sablon of gonderilecekler) {
     try {
       const buffer = fs.readFileSync(sablon.dosyaYolu);
@@ -108,6 +108,19 @@ async function saglikBeyanSablonuGonder(from) {
   }
 }
 
+// _urunTipi'nin BES ailesinden olup olmadigini (Yeni İş VEYA Aktarım) kontrol
+// eder - "BES Hayat Başvurusu" akisi 24.07.2026'da gercek bir Aktarım kolu
+// kazandigi icin, eskiden sadece "bes_yeni_is" kontrol eden pek cok yer artik
+// bu ortak fonksiyonu kullaniyor (asagida primAsgariBilgisi, odeme donemi/
+// katki payi metinleri, sabitSablonlariGonder, unvanIyelik, ilgiliFlow gibi
+// SADECE "BES mi degil mi" ayrimi yapan yerler icin). Yeni İş ile Aktarım'i
+// birbirinden AYIRAN kontroller (katki payi asgarisi, odeme araci secenekleri,
+// ekstra belgeler) hala answers._urunTipi'nin TAM degerine (bes_yeni_is vs
+// bes_aktarim) bakmaya devam ediyor.
+function besUrunTipiMi(urunTipi) {
+  return urunTipi === "bes_yeni_is" || urunTipi === "bes_aktarim";
+}
+
 // --- "Musteri" kelimesi lugatimizdan kaldirildi: BES'te (Bireysel Emeklilik)
 // dogru terim "katilimci", diger tum urunlerde (Hayat, elementer) "sigortali".
 // Soru metinlerinde/mesajlarda bu fonksiyon kullanilir - answers._urunTipi
@@ -115,7 +128,7 @@ async function saglikBeyanSablonuGonder(from) {
 // buyukHarfle: true ise cumle basi ("Katılımcı"/"Sigortalı"), false ise
 // cumle ici ("katılımcı"/"sigortalı").
 function sigortaliUnvani(answers, buyukHarfle) {
-  const besMi = answers && answers._urunTipi === "bes_yeni_is";
+  const besMi = besUrunTipiMi(answers && answers._urunTipi);
   const unvan = besMi ? "katılımcı" : "sigortalı";
   return buyukHarfle ? unvan.charAt(0).toUpperCase() + unvan.slice(1) : unvan;
 }
@@ -144,33 +157,51 @@ function tutarSayiyaCevir(value) {
   return Number(v);
 }
 
-// Danismanlarin girdigi prim/katki payi tutarinin dusmemesi gereken asgari
-// tutar - Hayat'ta pakete gore (Standart 150 USD, Premium 300 USD), BES'te
-// (katki payi) 5.000 TL. answers.paket sadece Hayat'ta doldurulur (BES'te bu
-// soru yok), o yuzden BES kontrolu once yapiliyor.
+// Danismanlarin girdigi prim/katki payi tutarinin izin verilen araligi -
+// Hayat'ta pakete gore degisiyor: Standart paket SADECE 150-299 USD
+// araliginda kabul edilir (24.07.2026 geri bildirimi - "standart seçildiyse
+// cevap olarak minimum 150 dolar maksimum 299 dolar"), Premium pakette ise
+// sadece bir ASGARI var (300 USD, ustsinir yok). BES'te Yeni İş'te asgari
+// 2.000 TL (24.07.2026 geri bildirimiyle 5.000 TL'den dusuruldu), Aktarım'da
+// ise asgari 150 TL - ikisinde de ustsinir yok. answers.paket sadece Hayat'ta
+// doldurulur (BES'te bu soru yok), o yuzden BES kontrolleri once yapiliyor.
+// "azami" alani null ise o paket/urun icin bir ust sinir olmadigi anlamina
+// gelir.
 function primAsgariBilgisi(answers) {
+  if (answers && answers._urunTipi === "bes_aktarim") {
+    return { asgari: 150, azami: null, birim: "TL" };
+  }
   if (answers && answers._urunTipi === "bes_yeni_is") {
-    return { asgari: 5000, birim: "TL" };
+    return { asgari: 2000, azami: null, birim: "TL" };
   }
   if (answers && answers.paket === "Premium") {
-    return { asgari: 300, birim: "USD" };
+    return { asgari: 300, azami: null, birim: "USD" };
   }
-  return { asgari: 150, birim: "USD" };
+  return { asgari: 150, azami: 299, birim: "USD" };
 }
 
 function primTutariVeMinimumGecerliMi(value, answers) {
   if (!primTutariGecerliMi(value)) return false;
   const sayi = tutarSayiyaCevir(value);
   if (Number.isNaN(sayi)) return false;
-  return sayi >= primAsgariBilgisi(answers).asgari;
+  const { asgari, azami } = primAsgariBilgisi(answers);
+  if (sayi < asgari) return false;
+  if (azami != null && sayi > azami) return false;
+  return true;
 }
 
 function primMinimumHatasi(value, answers) {
   if (!primTutariGecerliMi(value) || Number.isNaN(tutarSayiyaCevir(value))) {
     return "Bu bir tutar gibi görünmüyor, lütfen rakamla birlikte tekrar yazar mısınız?";
   }
-  const { asgari, birim } = primAsgariBilgisi(answers);
+  const { asgari, azami, birim } = primAsgariBilgisi(answers);
   const paketNotu = answers && answers.paket ? `${answers.paket} paket için ` : "";
+  if (azami != null) {
+    return (
+      `Girilen tutar izin verilen aralığın dışında görünüyor, bu tutarı kabul edemiyorum ⚠️ ${paketNotu}kabul edilen ` +
+      `aralık ${birim} ${asgari.toLocaleString("tr-TR")} - ${birim} ${azami.toLocaleString("tr-TR")} arasıdır, lütfen bu aralıkta bir değer paylaşır mısınız?`
+    );
+  }
   return (
     `Girilen tutar asgari tutarın altında görünüyor, bu tutarı kabul edemiyorum ⚠️ ${paketNotu}asgari tutar ` +
     `${birim} ${asgari.toLocaleString("tr-TR")} olmalıdır, lütfen bu tutarın üzerinde bir değer paylaşır mısınız?`
@@ -180,6 +211,20 @@ function primMinimumHatasi(value, answers) {
 // --- Arama tarihi/saati icin secenek uretimi (task: danisman serbest metin
 // yazmak yerine listeden secsin) ---
 const HAFTA_GUNLERI = ["Pazar", "Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi"];
+const TURKCE_AYLAR = [
+  "Ocak",
+  "Şubat",
+  "Mart",
+  "Nisan",
+  "Mayıs",
+  "Haziran",
+  "Temmuz",
+  "Ağustos",
+  "Eylül",
+  "Ekim",
+  "Kasım",
+  "Aralık"
+];
 const SAAT_ARALIKLARI = ["08:00-10:00", "10:00-12:00", "12:00-14:00", "14:00-16:00", "16:00-18:00"];
 // Son aralik 16:00'da basliyor, "bugunse en az 2 saat sonrasi" kurali
 // geregi bu saatten (16:00 - 2 saat = 14:00) sonra bugun icin hicbir uygun
@@ -228,13 +273,31 @@ function tarihSecenegiOlustur(tarih) {
     tarih.getDate() === yarin.getDate();
 
   const gunAdi = HAFTA_GUNLERI[tarih.getDay()];
-  const gunAyMetni = `${ikiHane(tarih.getDate())}.${ikiHane(tarih.getMonth() + 1)}`;
-  const kisaEtiket = bugunMu ? "Bugün" : yarinMi ? "Yarın" : `${gunAdi} (${gunAyMetni})`;
+  // 24.07.2026 geri bildirimi: "(27.07)" yerine "(27 Temmuz)" formati - sadece
+  // GORUNTULENEN kisa etiket icin, kanonik "deger" (GG.AA.YYYY) degismiyor
+  // cunku validators.js'deki aramaTarihiBugunMu/tarihiMsYap bu kesin formati
+  // regex ile parse ediyor.
+  const gunAyMetniTurkce = `${tarih.getDate()} ${TURKCE_AYLAR[tarih.getMonth()]}`;
+  const kisaEtiket = bugunMu ? "Bugün" : yarinMi ? "Yarın" : `${gunAdi} (${gunAyMetniTurkce})`;
 
   return {
     deger: `${ikiHane(tarih.getDate())}.${ikiHane(tarih.getMonth() + 1)}.${tarih.getFullYear()}`,
     kisaEtiket
   };
+}
+
+// Kanonik "GG.AA.YYYY" formatindaki bir arama_tarihi degerini (orn.
+// "27.07.2026"), mail/ozet metinlerinde gosterilmek uzere Turkce ay adiyla
+// insan-okunur bir metne cevirir (orn. "27 Temmuz"). Deger beklenen formatta
+// degilse (orn. bos/gecersiz), oldugu gibi geri dondurur - boylece beklenmedik
+// bir veri akisi bozmuyor.
+function tarihiGunAyOlarakYaz(deger) {
+  const match = (deger || "").trim().match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+  if (!match) return deger;
+  const gun = Number(match[1]);
+  const ay = Number(match[2]);
+  if (ay < 1 || ay > 12) return deger;
+  return `${gun} ${TURKCE_AYLAR[ay - 1]}`;
 }
 
 // arama_tarihi sorusunun "options"/"kisaSecenekler" fonksiyonlari - 5 hafta
@@ -282,6 +345,19 @@ function hitapEt(a, ucuncuSahisMetni, ikinciSahisMetni) {
 // senkron tutmak risk degil.
 const SATIS_TUM_DANISMAN_ISIMLERI = ["Enbel", "Seda", "Bahadır", "Fırat", "Yasemin", "Furkan", "Simge", "Tuğçe"];
 
+// BES basvurularinda (Yeni İş ve Aktarım) mail'e eklenen SABIT varsayilan fon
+// dagilimi (bkz. besOzetVerileriniHesapla yorumu - dinamik/guncel piyasaya
+// gore olmasi istenmisti ama ayarlanamadigi icin sabit birakildi). Oranlarin
+// toplami %100 olmalidir.
+const BES_FON_DAGILIMI_SABIT = [
+  { ad: "PARA PİYASASI EYF", kod: "GEL", oran: 15 },
+  { ad: "BİRİNCİ FON SEPETİ", kod: "GCT", oran: 10 },
+  { ad: "ÜÇÜNCÜ DEĞİŞKEN EYF", kod: "GHO", oran: 15 },
+  { ad: "YENİ TEK. HİSSE SENEDİ EYF", kod: "GCN", oran: 10 },
+  { ad: "KARMA EYF", kod: "GCY", oran: 15 },
+  { ad: "ALTIN KATILIM EYF", kod: "GHA", oran: 35 }
+];
+
 const SATIS_SORULARI_HAYAT = [
   // Sadece musteri KENDI KENDINE bu akisi baslattiginda sorulur (danisman
   // bir satis kaydi olustururken bu iki soru anlamsiz, o zaten kendisi bir
@@ -303,14 +379,20 @@ const SATIS_SORULARI_HAYAT = [
   },
   {
     id: "paket",
-    text: (a) => hitapEt(a, "Hangi paket için satış kaydı oluşturuyorsunuz?", "Hangi paket ile devam etmek istersiniz?"),
+    // Paketler arasindaki farki (tenzil kesinti orani) da bu soruda
+    // aciklayarak danismanin/musterinin bilgiyle secim yapmasini sagliyoruz
+    // (24.07.2026 geri bildirimi).
+    text: (a) =>
+      `${hitapEt(a, "Hangi paket için satış kaydı oluşturuyorsunuz?", "Hangi paket ile devam etmek istersiniz?")}\n\n` +
+      "📌 Paketler arasındaki fark: 2. yıl ile 8. yıl arasında poliçeden ayrılma (tenzil) durumunda uygulanan kesinti oranı " +
+      "*Standart* pakette %30, *Premium* pakette %15'tir.",
     type: "choice",
     // "Standart"/"Premium" oldugu gibi mail'e gidiyor (urunAdiTam icinde,
     // "Ürün Adı: Standart Prim İadeli Hayat Sigortası" gibi) - o yuzden bu
-    // degerleri degistirmiyoruz. Butonda asgari tutar bilgisini gostermek
-    // icin ayri bir kisaSecenekler tanimliyoruz.
+    // degerleri degistirmiyoruz. Butonda asgari/azami tutar bilgisini
+    // gostermek icin ayri bir kisaSecenekler tanimliyoruz.
     options: ["Standart", "Premium"],
-    kisaSecenekler: ["Standart(min.150usd)", "Premium(min.300usd)"]
+    kisaSecenekler: ["Standart(150-299usd)", "Premium(min.300usd)"]
   },
   {
     id: "musteri_ad_soyad",
@@ -395,7 +477,7 @@ const SATIS_SORULARI_HAYAT = [
   {
     id: "odeyen_farkli_mi",
     text: (a) => {
-      const alan = a._urunTipi === "bes_yeni_is" ? "Katkı payını" : "Primi";
+      const alan = besUrunTipiMi(a._urunTipi) ? "Katkı payını" : "Primi";
       return hitapEt(a, `${alan} ödeyecek kişi ${sigortaliUnvani(a, false)}nın kendisi mi?`, `${alan} ödeyecek kişi siz misiniz?`);
     },
     type: "choice",
@@ -421,20 +503,31 @@ const SATIS_SORULARI_HAYAT = [
     id: "odeme_araci",
     text: "Ödeme aracı nedir?",
     type: "choice",
-    options: ["Kredi Kartı", "Garanti Bankası Hesabı"],
+    // BES Aktarım'da ucuncu bir secenek olarak "Manuel" de sunuluyor
+    // (24.07.2026 geri bildirimi) - Hayat'ta ve BES Yeni İş'te bu secenek
+    // gosterilmiyor. "Manuel" secilirse katki payi sorusu atlanip otomatik
+    // "TL 150,00" olarak kaydediliyor (bkz. yukarida satisSoruSor'daki ozel
+    // durum kontrolu).
+    options: (a) =>
+      a && a._urunTipi === "bes_aktarim"
+        ? ["Kredi Kartı", "Garanti Bankası Hesabı", "Manuel"]
+        : ["Kredi Kartı", "Garanti Bankası Hesabı"],
     // "Garanti Bankası Hesabı" 22 karakter, WhatsApp'in dugme siniri olan 20'yi
     // asiyor. Bu deger oldugu gibi maile gittigi icin ("Ödeme Aracı: ...")
     // kisaltip degistiremeyiz - bunun yerine dugmede gosterilecek kisa bir
     // etiket tanimlıyoruz, kaydedilen/mail'e giden deger yine tam metin oluyor
     // (bkz. satisSoruSor / DANISMAN_SATIS_SORU'daki kisaSecenekler kullanimi).
-    kisaSecenekler: ["Kredi Kartı", "Garanti Bank. Hesabı"]
+    kisaSecenekler: (a) =>
+      a && a._urunTipi === "bes_aktarim"
+        ? ["Kredi Kartı", "Garanti Bank. Hesabı", "Manuel"]
+        : ["Kredi Kartı", "Garanti Bank. Hesabı"]
   },
   {
     id: "odeme_donemi",
     // BES'te odeme donemi police suresi boyunca HER ZAMAN degistirilebiliyor
     // (Hayat'ta degistirilemiyor) - bu yuzden uyari sadece Hayat'ta gosteriliyor.
     text: (a) =>
-      a._urunTipi === "bes_yeni_is"
+      besUrunTipiMi(a._urunTipi)
         ? "Ödeme dönemi nedir?"
         : "Ödeme dönemi nedir? (Not: poliçe süresi boyunca değiştirilemez.)",
     type: "choice",
@@ -446,25 +539,39 @@ const SATIS_SORULARI_HAYAT = [
     // tutar artik harici bir hesaplayiciya gerek kalmadan girilebiliyor -
     // vefat teminati, girilen bu prim tutarindan bot tarafindan otomatik
     // hesaplaniyor (bkz. asagidaki vefat_teminati sorusu / vefatTeminatiHesapla.js).
+    // Ornek tutar da secilen pakete/urun tipine gore degisiyor (24.07.2026
+    // geri bildirimi) - Hayat'ta Standart'ta "USD 200,00", Premium'da
+    // "USD 450,00"; BES Yeni İş'te "TL 2.000,00" (yeni asgariyle uyumlu),
+    // BES Aktarım'da "TL 150,00" gosteriliyor. NOT: BES Aktarım'da "Manuel"
+    // odeme araci secilirse bu soru zaten hic sorulmuyor (yukarida ozel durum).
     text: (a) => {
       const donem = a.odeme_donemi || "";
+      if (a._urunTipi === "bes_aktarim") {
+        return hitapEt(
+          a,
+          `Katılımcının ödeyeceği ${donem} katkı payı tutarını paylaşır mısınız? (Örn: TL 150,00)`,
+          `Ödemek istediğiniz ${donem} katkı payı tutarını paylaşır mısınız? (Örn: TL 150,00)`
+        );
+      }
       if (a._urunTipi === "bes_yeni_is") {
         return hitapEt(
           a,
-          `Katılımcının ödeyeceği ${donem} katkı payı tutarını paylaşır mısınız? (Örn: TL 5.000,00)`,
-          `Ödemek istediğiniz ${donem} katkı payı tutarını paylaşır mısınız? (Örn: TL 5.000,00)`
+          `Katılımcının ödeyeceği ${donem} katkı payı tutarını paylaşır mısınız? (Örn: TL 2.000,00)`,
+          `Ödemek istediğiniz ${donem} katkı payı tutarını paylaşır mısınız? (Örn: TL 2.000,00)`
         );
       }
+      const ornekTutar = a.paket === "Standart" ? "USD 200,00" : "USD 450,00";
       return hitapEt(
         a,
-        `${donem} prim tutarını paylaşır mısınız? (Örn: USD 450,00)`,
-        `Ödemek istediğiniz ${donem} prim tutarını paylaşır mısınız? (Örn: USD 450,00)`
+        `${donem} prim tutarını paylaşır mısınız? (Örn: ${ornekTutar})`,
+        `Ödemek istediğiniz ${donem} prim tutarını paylaşır mısınız? (Örn: ${ornekTutar})`
       );
     },
     type: "text",
-    // Asgari tutarin altinda bir deger girilirse KABUL ETMIYORUZ (Hayat
-    // Standart 150 USD, Premium 300 USD; BES 5.000 TL) - bkz. yukarida
-    // primTutariVeMinimumGecerliMi / primMinimumHatasi.
+    // Asgari VE azami tutar sinirlarinin disinda bir deger girilirse KABUL
+    // ETMIYORUZ (Hayat Standart: 150-299 USD araligi, Premium: sadece asgari
+    // 300 USD - ustsinir yok; BES: sadece asgari 5.000 TL) - bkz. yukarida
+    // primAsgariBilgisi / primTutariVeMinimumGecerliMi / primMinimumHatasi.
     validate: primTutariVeMinimumGecerliMi,
     validationError: primMinimumHatasi
   },
@@ -535,16 +642,25 @@ const SATIS_SORULARI_HAYAT = [
     type: "choice",
     options: aramaSaatAraligiSecenekleri
   },
-  // Belge sorulari: her biri tek bir belgenin FOTOĞRAFINI sırasıyla ister
-  // (PDF/döküman değil - kamera ya da galeriden seçilen bir fotoğraf her
-  // zaman WhatsApp'ın kendi "fotoğraf ekle" arayüzünden gönderilebiliyor).
-  // Her fotoğraf gönderildiğinde Claude görsel analiziyle hem netlik hem de
-  // doğru belge olup olmadığı kontrol ediliyor (bkz. belgeAnaliz.js).
+  // Belge sorulari: her biri tek bir belgenin FOTOĞRAFINI ister (PDF/döküman
+  // değil - kamera ya da galeriden seçilen bir fotoğraf her zaman WhatsApp'ın
+  // kendi "fotoğraf ekle" arayüzünden gönderilebiliyor). Her fotoğraf
+  // gönderildiğinde Claude görsel analiziyle hem netlik hem de doğru belge
+  // olup olmadığı kontrol ediliyor (bkz. belgeAnaliz.js).
+  //
+  // NOT (24.07.2026 geri bildirimi - "sırayla tek tek göndermek zorunda
+  // kalmasın kimse"): bu belgelerin ARTIK sirayla, bot'un her birini teker
+  // teker sormasini bekleyerek gonderilmesi gerekmiyor - danisman/musteri
+  // hepsini art arda, hatta karisik sirada gonderebilir. Gelen her fotograf,
+  // hangi bekleyen belgeye ait oldugu Claude gorsel analiziyle otomatik tespit
+  // edilerek kabul ediliyor (bkz. asagida handleAdvisorMessage icindeki
+  // belgeFotografiIsle / kalanBelgeSorulariniBul).
   {
     id: "belge_acik_riza",
     type: "tekli_foto_belge",
+    kisaAd: "Açık Rıza Beyanı",
     text: (a) =>
-      "Şimdi sırasıyla birkaç belgenin fotoğrafını rica edeceğim.\n\n" +
+      "Şimdi birkaç belgenin fotoğrafını rica edeceğim.\n\n" +
       "📄 İlk olarak, imzalı *Açık Rıza Beyanı'nın (KVKK metni)* fotoğrafını gönderir misiniz? " +
       hitapEt(
         a,
@@ -563,6 +679,7 @@ const SATIS_SORULARI_HAYAT = [
   {
     id: "belge_imza_karti",
     type: "tekli_foto_belge",
+    kisaAd: "İmza Kartı",
     text: "📄 Şimdi imzalı *İletişim Bilgileri ve Islak İmza Kartı*nın fotoğrafını gönderir misiniz?",
     beklenenBelge:
       "İmzalı bir İletişim Bilgileri ve Islak İmza Kartı formu. Üzerinde iletişim bilgileri (ad, telefon, " +
@@ -575,6 +692,7 @@ const SATIS_SORULARI_HAYAT = [
   {
     id: "belge_yerlesim_yeri",
     type: "tekli_foto_belge",
+    kisaAd: "Yerleşim Yeri Belgesi",
     text: "📄 Şimdi *yerleşim yeri belgesinin (ikametgah)* fotoğrafını gönderir misiniz?",
     beklenenBelge:
       "Bir yerleşim yeri belgesi / ikametgah belgesi. Resmi bir kurum (nüfus müdürlüğü, e-Devlet çıktısı vb.) " +
@@ -584,6 +702,7 @@ const SATIS_SORULARI_HAYAT = [
   {
     id: "belge_kimlik_on",
     type: "tekli_foto_belge",
+    kisaAd: "Kimlik (Ön Yüz)",
     text: "📄 Şimdi *kimliğin ön yüzünün* fotoğrafını gönderir misiniz?",
     beklenenBelge:
       "Bir T.C. kimlik kartının ÖN yüzü - üzerinde fotoğraf, isim, soyisim ve T.C. kimlik numarası bulunan yüz.",
@@ -592,19 +711,104 @@ const SATIS_SORULARI_HAYAT = [
   {
     id: "belge_kimlik_arka",
     type: "tekli_foto_belge",
-    text: "📄 Son olarak *kimliğin arka yüzünün* fotoğrafını gönderir misiniz?",
+    kisaAd: "Kimlik (Arka Yüz)",
+    // "Son olarak" sadece gercekten daha fazla belge istenmeyecekse dogru -
+    // odeyen farkliysa (sigorta ettirenden de belge istenecek) ya da saglik
+    // beyani gerekiyorsa bunun ardindan baska belgeler de gelecek.
+    text: (a) =>
+      a.odeyen_farkli_mi === "Hayır, Farklı Biri" || tutarSayiyaCevir(a.vefat_teminati) > 500000
+        ? "📄 Şimdi *kimliğin arka yüzünün* fotoğrafını gönderir misiniz?"
+        : "📄 Son olarak *kimliğin arka yüzünün* fotoğrafını gönderir misiniz?",
     beklenenBelge:
       "Bir T.C. kimlik kartının ARKA yüzü - üzerinde seri numarası, doğum yeri/tarihi ve diğer bilgilerin " +
       "bulunduğu yüz.",
     dosyaAdi: "kimlik_arka.jpg"
   },
+  // --- Sigorta ettiren (primi/katkı payını ödeyecek kişi) sigortalıdan/
+  // katılımcıdan farklıysa, aşağıdaki belgelerin AYNI şekilde sigorta
+  // ettirenden de alınması gerekiyor (24.07.2026 geri bildirimi - "sağlık
+  // beyanı hariç en sonda istediğimiz evrakları hem sigortalıdan hem de
+  // sigorta ettirenden almamız lazım"). Sağlık Beyan Formu bu kuralın DIŞINDA
+  // tutuluyor - o sadece sigortalının/katılımcının sağlık durumuyla ilgili
+  // olduğu için tekrar istenmiyor.
+  {
+    id: "belge_acik_riza_odeyen",
+    type: "tekli_foto_belge",
+    kisaAd: "Sigorta Ettiren - Açık Rıza Beyanı",
+    text:
+      "Primi ödeyecek kişi sigortalıdan farklı olduğu için aynı belgeleri sigorta ettirenden de alacağız.\n\n" +
+      "📄 Öncelikle sigorta ettirenin imzaladığı *Açık Rıza Beyanı'nın (KVKK metni)* fotoğrafını gönderir misiniz? " +
+      "(Yukarıda gönderdiğim şablonu sigorta ettirene de yazdırıp imzalatabilirsiniz)",
+    beklenenBelge:
+      "İmzalı bir Açık Rıza Beyanı / KVKK aydınlatma-rıza metni (sigorta ettiren tarafından imzalanmış). Üzerinde " +
+      "yazılı metin ve belgenin altında el yazısıyla atılmış bir imza olmalı.",
+    dosyaAdi: "sigorta_ettiren_acik_riza_beyani.jpg",
+    sablonGonder: true,
+    imzaGerekli: true,
+    skipIf: (a) => a.odeyen_farkli_mi !== "Hayır, Farklı Biri"
+  },
+  // Sadece Hayat'ta isteniyor (bkz. asagida SATIS_SORULARI_BES_YENI_IS filtrelemesi).
+  {
+    id: "belge_imza_karti_odeyen",
+    type: "tekli_foto_belge",
+    kisaAd: "Sigorta Ettiren - İmza Kartı",
+    text: "📄 Şimdi sigorta ettirenin imzaladığı *İletişim Bilgileri ve Islak İmza Kartı*nın fotoğrafını gönderir misiniz?",
+    beklenenBelge:
+      "İmzalı bir İletişim Bilgileri ve Islak İmza Kartı formu (sigorta ettiren tarafından imzalanmış). Üzerinde " +
+      "iletişim bilgileri (ad, telefon, adres vb.) ve el yazısıyla atılmış bir imza olmalı.",
+    dosyaAdi: "sigorta_ettiren_imza_karti.jpg",
+    imzaGerekli: true,
+    skipIf: (a) => a.odeyen_farkli_mi !== "Hayır, Farklı Biri"
+  },
+  // Sadece Hayat'ta isteniyor (bkz. asagida SATIS_SORULARI_BES_YENI_IS filtrelemesi).
+  {
+    id: "belge_yerlesim_yeri_odeyen",
+    type: "tekli_foto_belge",
+    kisaAd: "Sigorta Ettiren - Yerleşim Yeri Belgesi",
+    text: "📄 Şimdi sigorta ettirenin *yerleşim yeri belgesinin (ikametgah)* fotoğrafını gönderir misiniz?",
+    beklenenBelge:
+      "Bir yerleşim yeri belgesi / ikametgah belgesi (sigorta ettiren adına). Resmi bir kurum (nüfus müdürlüğü, " +
+      "e-Devlet çıktısı vb.) tarafından düzenlenmiş, kişinin güncel adres bilgisini gösteren bir belge olmalı.",
+    dosyaAdi: "sigorta_ettiren_yerlesim_yeri_belgesi.jpg",
+    skipIf: (a) => a.odeyen_farkli_mi !== "Hayır, Farklı Biri"
+  },
+  {
+    id: "belge_kimlik_on_odeyen",
+    type: "tekli_foto_belge",
+    kisaAd: "Sigorta Ettiren - Kimlik (Ön Yüz)",
+    text: "📄 Şimdi sigorta ettirenin *kimliğinin ön yüzünün* fotoğrafını gönderir misiniz?",
+    beklenenBelge:
+      "Bir T.C. kimlik kartının ÖN yüzü (sigorta ettiren adına) - üzerinde fotoğraf, isim, soyisim ve T.C. kimlik " +
+      "numarası bulunan yüz.",
+    dosyaAdi: "sigorta_ettiren_kimlik_on.jpg",
+    skipIf: (a) => a.odeyen_farkli_mi !== "Hayır, Farklı Biri"
+  },
+  {
+    id: "belge_kimlik_arka_odeyen",
+    type: "tekli_foto_belge",
+    kisaAd: "Sigorta Ettiren - Kimlik (Arka Yüz)",
+    // Bu, "sigorta ettiren" blogunun son belgesi - eger ardindan saglik
+    // beyani da istenecekse "Son olarak" yerine "Simdi" diyoruz.
+    text: (a) =>
+      tutarSayiyaCevir(a.vefat_teminati) > 500000
+        ? "📄 Şimdi sigorta ettirenin *kimliğinin arka yüzünün* fotoğrafını gönderir misiniz?"
+        : "📄 Son olarak sigorta ettirenin *kimliğinin arka yüzünün* fotoğrafını gönderir misiniz?",
+    beklenenBelge:
+      "Bir T.C. kimlik kartının ARKA yüzü (sigorta ettiren adına) - üzerinde seri numarası, doğum yeri/tarihi ve " +
+      "diğer bilgilerin bulunduğu yüz.",
+    dosyaAdi: "sigorta_ettiren_kimlik_arka.jpg",
+    skipIf: (a) => a.odeyen_farkli_mi !== "Hayır, Farklı Biri"
+  },
   // Sadece vefat teminati 500.000 USD'nin UZERINDEYSE isteniyor (Hayat'ta
   // anlamli - BES'te vefat_teminati hic sorulmadigi icin bu soru BES'te
   // otomatik atlanir, ayrica listeden cikarmaya gerek yok). Bos sablon,
   // sablonGonder: "saglikBeyani" ile bu soruya gelindiginde otomatik gonderilir.
+  // Sigorta ettiren farkli olsa BILE bu belge SADECE sigortalidan/katilimcidan
+  // isteniyor (24.07.2026 geri bildirimi - "sağlık beyanı hariç").
   {
     id: "belge_saglik_beyan",
     type: "tekli_foto_belge",
+    kisaAd: "Sağlık Beyan Formu",
     text:
       "📄 Vefat teminatı 500.000 USD üzerinde olduğu için ayrıca doldurulmuş ve imzalanmış " +
       "*Sağlık Beyan Formu*'nun fotoğrafını/taramasını gönderir misiniz?",
@@ -620,10 +824,83 @@ const SATIS_SORULARI_HAYAT = [
 
 // BES (Yeni İş) soru listesi, Hayat listesiyle birebir ayni - "paket" ve
 // "vefat_teminati" (BES'te yok) haric, ayrica ıslak imza karti ve yerlesim
-// yeri belgesi de BES Yeni İş'te istenmiyor. Boylece iki liste hep senkron kalir.
+// yeri belgesi (sigortali VE sigorta ettiren varyantlari) de BES Yeni İş'te
+// istenmiyor. Boylece iki liste hep senkron kalir.
 const SATIS_SORULARI_BES_YENI_IS = SATIS_SORULARI_HAYAT.filter(
-  (soru) => !["paket", "vefat_teminati", "belge_imza_karti", "belge_yerlesim_yeri"].includes(soru.id)
+  (soru) =>
+    ![
+      "paket",
+      "vefat_teminati",
+      "belge_imza_karti",
+      "belge_yerlesim_yeri",
+      "belge_imza_karti_odeyen",
+      "belge_yerlesim_yeri_odeyen"
+    ].includes(soru.id)
 );
+
+// --- BES Aktarım'a ozel ekstra belgeler (24.07.2026 geri bildirimi) ---
+// Aktarım Talep Formu ve Aktarım Bilgi Formu tek sayfalik normal belgeler;
+// Hesap Özeti Cetveli genelde birden fazla (1-3) sayfa oldugu icin ayri bir
+// "cok_sayfali_foto_belge" tipiyle tanimlaniyor - danisman/musteri "bitti"/
+// "tamam" yazana kadar (ya da 3 sayfaya ulasana kadar) bu belge acik kalir,
+// gelen HER fotograf yeni bir sayfa olarak eklenir (bkz. asagida
+// belgeFotografiIsle / handleAdvisorMessage'daki "bitti" komutu).
+const AKTARIM_TALEP_FORMU_SORUSU = {
+  id: "belge_aktarim_talep_formu",
+  type: "tekli_foto_belge",
+  kisaAd: "Aktarım Talep Formu",
+  text: "📄 Şimdi imzalı *Aktarım Talep Formu*'nun fotoğrafını gönderir misiniz?",
+  beklenenBelge:
+    "İmzalı bir Aktarım Talep Formu - bireysel emeklilik birikiminin başka bir şirkete/plana aktarılması için " +
+    "doldurulup imzalanmış resmi bir form.",
+  dosyaAdi: "aktarim_talep_formu.jpg",
+  imzaGerekli: true
+};
+
+const AKTARIM_BILGI_FORMU_SORUSU = {
+  id: "belge_aktarim_bilgi_formu",
+  type: "tekli_foto_belge",
+  kisaAd: "Aktarım Bilgi Formu",
+  text: "📄 Şimdi *Aktarım Bilgi Formu*'nun fotoğrafını gönderir misiniz?",
+  beklenenBelge:
+    "Bir Aktarım Bilgi Formu - bireysel emeklilik aktarım işlemiyle ilgili bilgilendirme içeriği taşıyan resmi " +
+    "bir form/belge.",
+  dosyaAdi: "aktarim_bilgi_formu.jpg"
+};
+
+const HESAP_OZETI_CETVELI_SORUSU = {
+  id: "belge_hesap_ozeti_cetveli",
+  type: "cok_sayfali_foto_belge",
+  kisaAd: "Hesap Özeti Cetveli",
+  text:
+    "📄 Şimdi mevcut kurumunuzdan alınan *Hesap Özeti Cetveli*'nin fotoğraflarını gönderir misiniz? Bu belge " +
+    "genelde birden fazla sayfa olur - tüm sayfaları art arda gönderebilirsiniz, hepsini gönderdiğinizde " +
+    '"bitti" yazmanız yeterli.',
+  beklenenBelge:
+    "Bir Hesap Özeti Cetveli - bireysel emeklilik hesabının güncel durumunu/bakiyesini gösteren, ilgili kurumdan " +
+    "alınmış resmi bir doküman/çizelge (birden fazla sayfadan oluşabilir).",
+  // Dikkat: burada dosya UZANTISI YOK - her sayfa kabul edildiğinde
+  // "hesap_ozeti_cetveli_1.jpg", "hesap_ozeti_cetveli_2.jpg" gibi numaralı bir
+  // ad uretiliyor (bkz. belgeFotografiIsle).
+  dosyaAdi: "hesap_ozeti_cetveli",
+  minSayfa: 1,
+  maksSayfa: 3
+};
+
+// BES Aktarım soru listesi - BES Yeni İş ile ayni temeli paylasir (odeyen
+// farkliysa acik riza + kimlik on/arka sigorta ettirenden de istenir, ayni
+// sekilde), ustune Aktarım'a ozel 3 ekstra belge eklenir. Bu belgeler,
+// "belge_saglik_beyan"dan HEMEN ONCE ekleniyor (saglik beyani BES'te zaten
+// hicbir zaman tetiklenmiyor - vefat_teminati BES'te hic sorulmuyor - ama
+// yine de listenin en sonunda kalsin diye).
+const SATIS_SORULARI_BES_AKTARIM = (() => {
+  const temel = SATIS_SORULARI_BES_YENI_IS.slice();
+  const saglikBeyanIndex = temel.findIndex((soru) => soru.id === "belge_saglik_beyan");
+  const eklenecekler = [AKTARIM_TALEP_FORMU_SORUSU, HESAP_OZETI_CETVELI_SORUSU, AKTARIM_BILGI_FORMU_SORUSU];
+  const eklemeNoktasi = saglikBeyanIndex >= 0 ? saglikBeyanIndex : temel.length;
+  temel.splice(eklemeNoktasi, 0, ...eklenecekler);
+  return temel;
+})();
 
 // Danisman listesi tum urunlerde ayni referansi paylasir (flows.js'deki
 // DANISMANLAR sabiti), o yuzden herhangi bir urunden okuyabiliriz.
@@ -721,8 +998,8 @@ function turkiyeSaatiniFormatla(ms, secenekler) {
 
 // --- Karsilama (ana giris noktasi) ---
 const ANA_MENU_SECENEKLERI = [
-  "Yeni İş Talebi",
-  "BES Hayat Satış",
+  "Elementer Teklif Al",
+  "BES Hayat Başvurusu",
   "Bekleyen İş",
   "Destek Talebi Oluştur",
   "Yaklaşan Yenilemeler",
@@ -867,6 +1144,12 @@ function oncekiGecerliIndex(sorular, answers, baslangic) {
 
 const GERI_AL_REGEX = /^\s*geri\s*al\s*[!.]?\s*$/i;
 
+// Cok sayfali bir belgenin (orn. Hesap Ozeti Cetveli) sayfalarinin bittigini
+// bildirmek icin kullanilan komut - "bitti" ya da "tamam" yazip gonderince
+// o an acik olan cok sayfali belge tamamlanmis sayilir (bkz.
+// devamEdenCokSayfaliBelgeyiBul, belgeTamamlandiMesajiGonderVeDevamEt).
+const BELGE_BITTI_REGEX = /^\s*(bitti|tamam)\s*[!.]?\s*$/i;
+
 // "choice" tipi bir satis sorusuna gelen cevabi, o sorunun tam/kanonik
 // degerlerinden (soru.options) birine cozer. Soruda kisaSecenekler
 // tanimliysa (WhatsApp'in 20 karakter dugme sinirini asan uzun degerler
@@ -907,7 +1190,7 @@ function secilenSecenegiCoz(userText, soru, answers) {
 // belgeler satisTamamla'da ayrica kontrol ediliyor.)
 function eksikBilgiVarMi(sorular, answers) {
   return sorular.some((soru) => {
-    if (soru.type === "tekli_foto_belge") return false;
+    if (soru.type === "tekli_foto_belge" || soru.type === "cok_sayfali_foto_belge") return false;
     if (soru.danismandaGizle || (soru.skipIf && soru.skipIf(answers))) return false;
     const cevap = answers[soru.id];
     return cevap === undefined || cevap === null || (typeof cevap === "string" && cevap.trim() === "");
@@ -959,6 +1242,11 @@ function satisAkisiBaslat(from, session, urunTipi, sorular, musteriKendiKendineM
     session.satisAnswers.musteri_ad_soyad = session.name;
   }
   session.satisBelgeler = [];
+  // Hangi belge sorularinin (id'lerinin) kabul edildigini tutar - belgeler
+  // artik sirayla degil, KARISIK/TOPLU sirada da gonderilebildigi icin
+  // "hangi index'e kadar geldik" yerine "hangi id'ler tamamlandi" takip
+  // ediyoruz (bkz. kalanBelgeSorulariniBul / belgeFotografiIsle).
+  session.satisBelgeTamamlanan = [];
   session.satisSoruIndex = sonrakiGecerliIndex(sorular, session.satisAnswers, 0);
   session.state = musteriKendiKendineMi ? "MUSTERI_SATIS_SORU" : "DANISMAN_SATIS_SORU";
   return satisSoruSor(from, session);
@@ -1035,6 +1323,26 @@ async function satisSoruSor(from, session) {
     console.warn(`Vefat teminati otomatik hesaplanamadi (${sonuc.sebep}), soru elle sorulacak.`);
   }
 
+  // BES Aktarım'da odeme araci olarak "Manuel" secildiyse, katki payi
+  // sorusunu HIC SORMADAN otomatik olarak asgari tutar olan "TL 150,00"
+  // olarak kaydedip bir sonraki soruya geciyoruz (24.07.2026 geri bildirimi -
+  // "manuel seçildiğinde katkı payı otomatik olarak 150 olarak belirlenir").
+  // vefat_teminati'nin otomatik hesaplama deseniyle birebir ayni mantik.
+  if (soru.id === "prim_tutari" && session.satisAnswers.odeme_araci === "Manuel" && !session.satisAnswers.prim_tutari) {
+    session.satisAnswers.prim_tutari = "TL 150,00";
+    await sendText(
+      from,
+      "Ödeme aracı olarak *Manuel* seçildiği için katkı payını otomatik olarak *TL 150,00* olarak kaydettik ✅"
+    );
+    session.satisSoruIndex = sonrakiGecerliIndex(session.satisSorular, session.satisAnswers, session.satisSoruIndex + 1);
+    if (session.satisSoruIndex >= session.satisSorular.length) {
+      await satisTamamla(from, session);
+    } else {
+      await satisSoruSor(from, session);
+    }
+    return;
+  }
+
   // Belgeler adimina ilk gelindiginde, danismanin sigortaliya/katilimciya
   // yazdirip imzalatmasi icin Garanti'nin bos sablon formlarini once
   // gonderiyoruz. sablonGonder === true -> acik riza + (Hayat'ta) imza karti,
@@ -1046,7 +1354,21 @@ async function satisSoruSor(from, session) {
     await saglikBeyanSablonuGonder(from);
   }
 
-  const metin = typeof soru.text === "function" ? soru.text(session.satisAnswers) : soru.text;
+  let metin = typeof soru.text === "function" ? soru.text(session.satisAnswers) : soru.text;
+
+  // Belge asamasinin en basinda (belge_acik_riza), o an gecerli olan (paket/
+  // odeyen_farkli_mi/vefat_teminati'ne gore skipIf'leri cozulmus) TAM belge
+  // listesini ONCEDEN gosteriyoruz - boylece danisman/musteri hangi
+  // belgelerin isteneceğini bastan bilir ve hepsini istediği sırada, hatta
+  // hepsini art arda gönderebilir (bkz. 24.07.2026 geri bildirimi - "sırayla
+  // tek tek göndermek zorunda kalmasın kimse").
+  if (soru.id === "belge_acik_riza") {
+    const tumBelgeler = kalanBelgeSorulariniBul(session);
+    const liste = tumBelgeler.map((s) => `• ${belgeKisaEtiket(s)}`).join("\n");
+    metin =
+      `${metin}\n\n📋 İstenen belgeler:\n${liste}\n\n` +
+      "Bu belgelerin fotoğraflarını istediğiniz sırayla, hatta hepsini art arda (benim cevabımı beklemeden) tek seferde de gönderebilirsiniz - her birini tanıyıp otomatik olarak işleyeceğim.";
+  }
 
   if (soru.type === "choice") {
     // kisaSecenekler varsa (bkz. odeme_araci) butonda/liste'de o gosterilir -
@@ -1091,10 +1413,10 @@ async function musteriyeSatisBildirimiGonder(a, urunAdiTam) {
   // reddedildi). Bu yuzden burada da SIRALI bir dizi gonderiyoruz - sira
   // sablondaki {{1}}..{{4}} ile BIREBIR ayni olmak zorunda: musteri_adi,
   // urun_adi, arama_tarihi, arama_saat_araligi.
-  const degerler = [a.musteri_ad_soyad, urunAdiTam, a.arama_tarihi, a.arama_saat_araligi];
+  const degerler = [a.musteri_ad_soyad, urunAdiTam, tarihiGunAyOlarakYaz(a.arama_tarihi), a.arama_saat_araligi];
   const gosterilecekMetin =
     `[Otomatik - Satış Bilgilendirme] ${a.musteri_ad_soyad} için ${urunAdiTam} başvurusu alındı, ` +
-    `Garanti Emeklilik ${a.arama_tarihi} tarihinde ${a.arama_saat_araligi} saatleri arasında arayacak bilgisi iletildi.`;
+    `Garanti Emeklilik ${tarihiGunAyOlarakYaz(a.arama_tarihi)} tarihinde ${a.arama_saat_araligi} saatleri arasında arayacak bilgisi iletildi.`;
 
   try {
     await sendTemplatePozisyonel(numara, sablonAdi, "tr", degerler, gosterilecekMetin);
@@ -1135,7 +1457,15 @@ function satisOzetVerileriniHesapla(a, urunTipi) {
     `${unvan} Doğum Tarihi: ${a.sigortali_dogum_tarihi}`,
     `Cinsiyet: ${a.sigortali_cinsiyet}`,
     `${unvan} Uyruk/Doğum Yeri: ${sigortaliUyrukDegeri} / ${a.sigortali_dogum_yeri}`,
-    `Ödeyen Ad Soyad ${kimlikNoEtiketi}: ${odeyenAdSoyad} ${odeyenTck}`,
+    // Sigorta ettiren (primi/katkı payını ödeyecek kişi) bilgileri - 24.07.2026
+    // geri bildirimi geregi ayri, acik satirlar halinde ("Ödeyen Ad Soyad TCK
+    // No" tek satirda birlesik degil) ve "Sigorta Ettiren" terimiyle
+    // (Garanti Emeklilik'in de kullandigi resmi terim) etiketleniyor. Odeyen
+    // her zaman T.C. vatandasi varsayiliyor (odeyen_tck sorusu Mavi Kart
+    // secenegi sunmuyor), o yuzden burada sabit "TCK No" kullaniliyor -
+    // sigortalinin kendi kimlikNoEtiketi'nden (Mavi Kart olabilir) bagimsiz.
+    `Sigorta Ettiren Ad Soyad: ${odeyenAdSoyad}`,
+    `Sigorta Ettiren TCK No: ${odeyenTck}`,
     `Dağıtım Kanalı Adı: EKŞİ GROUP`,
     `Dağıtım Kanalı kodu: 329`,
     // Poliçe süresi artik sorulmuyor - Hayat'ta her zaman 12 yil varsayiliyor.
@@ -1150,12 +1480,67 @@ function satisOzetVerileriniHesapla(a, urunTipi) {
     ...(urunTipi === "hayat" ? [`Vefat Teminatı: ${a.vefat_teminati}`] : []),
     `Sigortalı Cep Telefonu: ${a.sigortali_cep}`,
     `Sigortalı E-Posta: ${a.sigortali_eposta}`,
-    `Ödeyen Cep Telefonu: ${odeyenCep}`,
-    `Ödeyen E-Posta: ${odeyenEposta}`
+    `Sigorta Ettiren Cep Telefonu: ${odeyenCep}`,
+    `Sigorta Ettiren E-Posta: ${odeyenEposta}`
   ];
 
-  const unvanIyelik = urunTipi === "bes_yeni_is" ? "Katılımcımızın" : "Sigortalımızın";
-  const acilisMetni = `${unvanIyelik} ${a.arama_tarihi} tarihinde, ${a.arama_saat_araligi} saatleri arasında aranması ricadır.`;
+  const unvanIyelik = besUrunTipiMi(urunTipi) ? "Katılımcımızın" : "Sigortalımızın";
+  const acilisMetni = `${unvanIyelik} ${tarihiGunAyOlarakYaz(a.arama_tarihi)} tarihinde, ${a.arama_saat_araligi} saatleri arasında aranması ricadır.`;
+
+  return { urunAdiTam, ozetSatirlari, acilisMetni };
+}
+
+// BES basvurularinda (hem Yeni İş hem Aktarım) Garanti Emeklilik'e giden
+// mailin, kullanicinin paylastigi ornek formata (Dagitim Kanali/Plan Kodu/
+// Grup Kodu/birlesik satirlar/Lehtar/Fon Dagilimi) uyacak sekilde AYRI bir
+// ozet fonksiyonu - Hayat'takinden (satisOzetVerileriniHesapla) yapisal
+// olarak farkli oldugu icin (birlesik satirlar, ekstra sabit alanlar) ayni
+// fonksiyonu asiri karmasiklastirmak yerine BAGIMSIZ tutuluyor (24.07.2026
+// geri bildirimi).
+//
+// NOT - Fon Dağılımı: kullanici bunun "güncel piyasa koşullarına göre
+// değişken" olmasini istedigini ama bunu ayarlayamadiklarini belirtti (daha
+// once denenen "Ekonomiye Göre Fon" ozelliginin kaldirilmasiyla ayni sebep) -
+// bu yuzden asagidaki BES_FON_DAGILIMI_SABIT, kullanicinin paylastigi ornek
+// gorseldeki oranlarla SABIT bir varsayilan olarak kullaniliyor. Ileride
+// gercekten guncel/degisken bir dagilim istenirse bu sabiti degistirmek ya da
+// disaridan (env/panel) okunan bir degere baglamak yeterli olur.
+function besOzetVerileriniHesapla(a, urunTipi) {
+  const tcVatandasiMi = a.sigortali_tc_vatandasi_mi === "Evet";
+  const sigortaliKimlikNo = tcVatandasiMi ? a.sigortali_tck : a.sigortali_mavi_kart_no;
+  const kimlikNoEtiketi = tcVatandasiMi ? "T.C. No" : "Mavi Kart No";
+  const sigortaliUyrukDegeri = tcVatandasiMi ? "T.C." : a.sigortali_uyruk;
+
+  const odeyenAyniMi = a.odeyen_farkli_mi !== "Hayır, Farklı Biri";
+  const odeyenAdSoyad = odeyenAyniMi ? a.musteri_ad_soyad : a.odeyen_ad_soyad;
+  const odeyenTck = odeyenAyniMi ? sigortaliKimlikNo : a.odeyen_tck;
+  const odeyenCep = odeyenAyniMi ? a.sigortali_cep : a.odeyen_cep;
+  const odeyenEposta = odeyenAyniMi ? a.sigortali_eposta : a.odeyen_eposta;
+
+  const urunAdiTam =
+    urunTipi === "bes_aktarim"
+      ? "Bireysel Emeklilik Sistemi (BES) - Aktarım"
+      : "Bireysel Emeklilik Sistemi (BES) - Yeni İş";
+
+  const ozetSatirlari = [
+    `Ürün Adı: ${urunAdiTam}`,
+    `Dağıtım Kanalı Adı: EKŞİ GROUP`,
+    `Dağıtım Kanalı Kodu: 329`,
+    `Plan Kodu: 8040`,
+    `Grup Kodu: 70270`,
+    `Katılımcı Ad Soyadı / ${kimlikNoEtiketi} / Cep Telefonu: ${a.musteri_ad_soyad} / ${sigortaliKimlikNo} / ${a.sigortali_cep}`,
+    `Katılımcı E-Posta: ${a.sigortali_eposta}`,
+    `Katılımcı Uyruk/Doğum Yeri: ${sigortaliUyrukDegeri} / ${a.sigortali_dogum_yeri}`,
+    `Ödeyen Ad Soyadı / T.C. No / Cep Telefonu: ${odeyenAdSoyad} / ${odeyenTck} / ${odeyenCep}`,
+    `Ödeyen E-Posta: ${odeyenEposta}`,
+    `Ödeme Periyodu ve Katkı Payı: ${a.odeme_donemi} - ${a.prim_tutari}`,
+    `Ödeme Aracı: ${a.odeme_araci}`,
+    `Lehtar: Kanuni Varisler`,
+    `Fon Dağılımı:`,
+    ...BES_FON_DAGILIMI_SABIT.map((f) => `${f.ad} (${f.kod}): %${f.oran}`)
+  ];
+
+  const acilisMetni = `Katılımcımızın ${tarihiGunAyOlarakYaz(a.arama_tarihi)} tarihinde, ${a.arama_saat_araligi} saatleri arasında aranması ricadır.`;
 
   return { urunAdiTam, ozetSatirlari, acilisMetni };
 }
@@ -1217,7 +1602,12 @@ async function satisTamamla(from, session) {
   const a = session.satisAnswers;
   const urunTipi = session.satisUrunTipi;
 
-  const { urunAdiTam, ozetSatirlari, acilisMetni } = satisOzetVerileriniHesapla(a, urunTipi);
+  // BES (Yeni İş/Aktarım) ve Hayat mail formatlari yapisal olarak farklilasti
+  // (24.07.2026 geri bildirimi) - hangi ozet fonksiyonunun kullanilacagini
+  // urun tipine gore seciyoruz.
+  const { urunAdiTam, ozetSatirlari, acilisMetni } = besUrunTipiMi(urunTipi)
+    ? besOzetVerileriniHesapla(a, urunTipi)
+    : satisOzetVerileriniHesapla(a, urunTipi);
 
   // Danismanin tek tek yukledigi belgeleri (kimlik on/arka, imzali evraklar,
   // yerlesim yeri belgesi) mail'e ayri ayri ek olarak eklemek yerine tek bir
@@ -1291,7 +1681,7 @@ async function satisTamamla(from, session) {
   // cevaba, yoksa urunun varsayilan numarasina gore) coz - flows.js'teki
   // ayni amacli mantikla (resolveAgentNumber) birebir tutarli olsun diye
   // conversationEngine'deki fonksiyonu tekrar kullaniyoruz.
-  const ilgiliFlow = flows[urunTipi === "bes_yeni_is" ? "bes" : "hayat"];
+  const ilgiliFlow = flows[besUrunTipiMi(urunTipi) ? "bes" : "hayat"];
   const musteriDanismanNumarasi = musteriKendiKendine
     ? conversationEngine.resolveAgentNumber(ilgiliFlow, { answers: { danisman_adi: a.satis_danisman_adi } })
     : null;
@@ -1867,6 +2257,248 @@ async function besFonListesiGoster(from, session) {
   await devamMenuGoster(from, session);
 }
 
+// --- Belgelerin TOPLU/KARISIK sirada gonderilebilmesi (24.07.2026 geri
+// bildirimi) icin yardimci fonksiyonlar ---
+
+// Bir numara (from) icin, art arda gelen belge fotograflarinin BIRBIRINE
+// KARISMADAN, her biri bir oncekinin islemi TAMAMEN bitmeden baslamayacak
+// sekilde SIRAYLA islenmesini saglayan basit bir kuyruk. Bu olmadan, ayni
+// session'a nerdeyse ayni anda gelen iki fotograf webhook'u, ikisi de
+// "su an bekleyen ilk belge hangisi" sorusunu AYNI (eski) session durumuyla
+// okuyup celisen guncellemeler yapabilirdi (bkz. asagida belgeFotografiIsle).
+const belgeIslemSirasi = new Map();
+function belgeIslemSirayaAl(from, gorev) {
+  const onceki = belgeIslemSirasi.get(from) || Promise.resolve();
+  const sonraki = onceki.then(gorev, gorev);
+  // Zincirin bir sonraki fotografi engellememesi icin hatalari burada yutuyoruz
+  // (gorev kendi ici try/catch ile zaten hatalari kullaniciya bildiriyor).
+  belgeIslemSirasi.set(from, sonraki.catch(() => {}));
+  return sonraki;
+}
+
+// Bir belge sorusu icin kisa, insan-okunur bir etiket - "Belge alındı ✅"
+// onayinda ve "kalan belgeler" listesinde kullanilir.
+function belgeKisaEtiket(soru) {
+  return (soru && soru.kisaAd) || (soru && soru.dosyaAdi) || "belge";
+}
+
+// Su anda bekleyen (henuz kabul edilmemis VE skipIf'e gore atlanmamis) tum
+// "tekli_foto_belge" tipi sorulari, session.satisSorular icindeki SIRAYLA
+// dondurur. Belgeler artik KESINLIKLE sirayla gelmek zorunda olmadigi icin,
+// "su anki tek bir soru" yerine tum bekleyen adaylari donduruyoruz - gelen
+// bir fotografin hangisine ait oldugunu belgeFotografiIsle bu listeye gore
+// tespit ediyor.
+function belgeSorusuMu(soru) {
+  return soru.type === "tekli_foto_belge" || soru.type === "cok_sayfali_foto_belge";
+}
+
+// Kimlik on/arka yuz cifti olusturan belge sorulari arasindaki eslesme
+// (24.07.2026 geri bildirimi - "farklı bir kimliğin arka yüzünü kabul
+// etmeyelim"): bir taraf kabul edildikten sonra diger taraf geldiginde,
+// ikisinin ayni kimlige ait olup olmadigini kontrol edebilmek icin hangi
+// soru id'sinin "ciftlendigini" burada tutuyoruz. Hem sigortalinin hem de
+// (farkliysa) odeyenin kimlik on/arka sorulari icin ayri ayri tanimli.
+const KIMLIK_ESLESEN_CIFT = {
+  belge_kimlik_on: "belge_kimlik_arka",
+  belge_kimlik_arka: "belge_kimlik_on",
+  belge_kimlik_on_odeyen: "belge_kimlik_arka_odeyen",
+  belge_kimlik_arka_odeyen: "belge_kimlik_on_odeyen"
+};
+
+function kalanBelgeSorulariniBul(session) {
+  const tamamlanan = session.satisBelgeTamamlanan || [];
+  return session.satisSorular.filter(
+    (soru) => belgeSorusuMu(soru) && !(soru.skipIf && soru.skipIf(session.satisAnswers)) && !tamamlanan.includes(soru.id)
+  );
+}
+
+// Kalan (henuz tamamlanmamis) belgeler arasinda, en az 1 sayfasi kabul edilmis
+// ama HENUZ "bitti" denilmemis (tamamlanmis sayilmamis) bir "cok_sayfali_foto_belge"
+// var mi diye bakar - varsa "bitti"/"tamam" komutunun hangi belgeyi kapatacagini
+// bulmak icin kullanilir (bkz. asagida handleAdvisorMessage).
+function devamEdenCokSayfaliBelgeyiBul(session) {
+  const sayilar = session.satisCokSayfaliSayilar || {};
+  return (
+    kalanBelgeSorulariniBul(session).find(
+      (soru) => soru.type === "cok_sayfali_foto_belge" && (sayilar[soru.id] || 0) > 0
+    ) || null
+  );
+}
+
+// Gelen bir belge fotografini, bekleyen belge sorulariyla eslestirip kabul
+// eder/reddeder ve session'i (satisBelgeler, satisBelgeTamamlanan,
+// satisSoruIndex) buna gore gunceller. Tum bekleyen belgeler tamamlaninca
+// satisTamamla'yi kendisi cagirir.
+async function belgeFotografiIsle(from, session, buffer, gercekMimeType) {
+  const kalanlar = kalanBelgeSorulariniBul(session);
+  if (kalanlar.length === 0) {
+    await sendText(from, "Şu an bir fotoğraf/döküman beklemiyorum 🙂");
+    return;
+  }
+
+  // Once, session.satisSoruIndex'in isaret ettigi (varsa) "sirali" beklenen
+  // soruyu deniyoruz - belgeler beklenen sirayla geldiginde (yaygin durum) tek
+  // bir analiz cagrisi yeterli oluyor. Eslesmezse (yanlis belge turu),
+  // SIRAYLA diger bekleyen adaylari da deniyoruz - boylece belgeler HANGI
+  // SIRAYLA/KARISIK gonderilirse gonderilsin dogru sekilde taninabiliyor.
+  const suankiSoru = session.satisSorular[session.satisSoruIndex];
+  const suankiKalandaMi = suankiSoru && kalanlar.includes(suankiSoru);
+  const adaylar = suankiKalandaMi ? [suankiSoru, ...kalanlar.filter((s) => s !== suankiSoru)] : kalanlar;
+
+  let eslesenSoru = null;
+  let sonAnaliz = null;
+  let analizAtlandi = false;
+
+  for (const aday of adaylar) {
+    let analiz = null;
+    try {
+      analiz = await belgeFotografiAnalizEt(buffer, gercekMimeType, aday.beklenenBelge, aday.imzaGerekli);
+    } catch (err) {
+      // Analiz hic yapilamiyorsa (orn. ANTHROPIC_API_KEY yok) tum adaylari
+      // tek tek denemenin bir anlami yok - eski (analizsiz kabul) davranisina,
+      // ilk (sirali) adayi kullanarak guvenli sekilde dusuyoruz.
+      console.error("Belge foto analizi yapilamadi (belge yine de kabul edilecek):", err.message);
+      analizAtlandi = true;
+      eslesenSoru = adaylar[0];
+      break;
+    }
+    sonAnaliz = analiz;
+    if (analiz.dogruBelgeMi) {
+      eslesenSoru = aday;
+      break;
+    }
+  }
+
+  if (!eslesenSoru) {
+    const beklenenler = kalanlar.map((s) => `• ${belgeKisaEtiket(s)}`).join("\n");
+    await sendText(
+      from,
+      `Bu fotoğraf beklediğim belgelerden hiçbirine benzemiyor 🤔 ${sonAnaliz && sonAnaliz.aciklama ? sonAnaliz.aciklama + "\n\n" : ""}` +
+        `Hâlâ şu belgeleri bekliyorum:\n${beklenenler}\n\nLütfen bunlardan birinin fotoğrafını gönderir misiniz?`
+    );
+    return;
+  }
+
+  if (!analizAtlandi) {
+    if (!sonAnaliz.netMi) {
+      await sendText(
+        from,
+        `"${belgeKisaEtiket(eslesenSoru)}" için gönderdiğiniz fotoğraf yeterince net görünmüyor 😕 ${sonAnaliz.aciklama || ""}\n\nDaha iyi ışıkta, net bir şekilde tekrar çeker misiniz?`
+      );
+      return;
+    }
+    if (eslesenSoru.imzaGerekli && !sonAnaliz.imzaliMi) {
+      await sendText(
+        from,
+        `"${belgeKisaEtiket(eslesenSoru)}" boş/imzasız bir şablon gibi görünüyor 🤔 ${sonAnaliz.aciklama || ""}\n\nLütfen doldurup imzalanmış halinin fotoğrafını gönderir misiniz?`
+      );
+      return;
+    }
+  }
+
+  // Kimlik on/arka tutarlilik kontrolu (24.07.2026 geri bildirimi - "farklı
+  // bir kimliğin arka yüzünü kabul etmeyelim"): eslesen soru bir kimlik on/
+  // arka belgesiyse VE cifti (on<->arka) zaten kabul edilmisse, ikisinin ayni
+  // kimlige ait olup olmadigini kontrol ediyoruz. SONRADAN gelen taraf
+  // (yani su an isledigimiz eslesenSoru) uyusmuyorsa REDDEDIYORUZ - onceden
+  // kabul edilmis olan taraf dokunulmadan kaliyor.
+  const ciftSoruId = KIMLIK_ESLESEN_CIFT[eslesenSoru.id];
+  if (ciftSoruId && session.satisBelgeTamamlanan.includes(ciftSoruId)) {
+    const ciftSoru = session.satisSorular.find((s) => s.id === ciftSoruId);
+    const ciftBelge = ciftSoru && session.satisBelgeler.find((b) => b.dosyaAdi === ciftSoru.dosyaAdi);
+    if (ciftBelge) {
+      try {
+        const ciftBuffer = Buffer.from(ciftBelge.veriBase64, "base64");
+        const yeniOnMu = eslesenSoru.id.includes("kimlik_on");
+        const tutarlilik = await kimlikOnArkaTutarliMi(
+          yeniOnMu ? buffer : ciftBuffer,
+          yeniOnMu ? gercekMimeType : ciftBelge.mimeType,
+          yeniOnMu ? ciftBuffer : buffer,
+          yeniOnMu ? ciftBelge.mimeType : gercekMimeType
+        );
+        if (!tutarlilik.tutarliMi) {
+          await sendText(
+            from,
+            `"${belgeKisaEtiket(eslesenSoru)}" olarak gönderdiğiniz fotoğraf, daha önce kabul ettiğim ` +
+              `"${belgeKisaEtiket(ciftSoru)}" ile aynı kimliğe ait görünmüyor 🤔 ${tutarlilik.aciklama || ""}\n\n` +
+              `Lütfen bu kimliğe ait doğru "${belgeKisaEtiket(eslesenSoru)}" fotoğrafını gönderir misiniz?`
+          );
+          return;
+        }
+      } catch (err) {
+        console.error("Kimlik on/arka tutarlilik kontrolu yapilamadi (belge yine de kabul edilecek):", err.message);
+      }
+    }
+  }
+
+  if (eslesenSoru.type === "cok_sayfali_foto_belge") {
+    session.satisCokSayfaliSayilar = session.satisCokSayfaliSayilar || {};
+    const sayfaNo = (session.satisCokSayfaliSayilar[eslesenSoru.id] || 0) + 1;
+    session.satisBelgeler.push({
+      dosyaAdi: `${eslesenSoru.dosyaAdi}_${sayfaNo}.jpg`,
+      mimeType: gercekMimeType,
+      veriBase64: buffer.toString("base64")
+    });
+    session.satisCokSayfaliSayilar[eslesenSoru.id] = sayfaNo;
+
+    if (sayfaNo >= eslesenSoru.maksSayfa) {
+      // Azami sayfa sayisina ulasildi - danismana/musteriye sormadan otomatik
+      // tamamlanmis sayiyoruz.
+      session.satisBelgeTamamlanan = session.satisBelgeTamamlanan || [];
+      session.satisBelgeTamamlanan.push(eslesenSoru.id);
+      await belgeTamamlandiMesajiGonderVeDevamEt(from, session, eslesenSoru, `${sayfaNo}. sayfa alındı, azami sayfa sayısına ulaşıldı`);
+      return;
+    }
+
+    // Henuz azami sayfaya ulasilmadi - belge hala "acik", "bitti" yazilana
+    // kadar yeni sayfalar eklenmeye devam edebilir.
+    await sendText(
+      from,
+      `"${belgeKisaEtiket(eslesenSoru)}" - ${sayfaNo}. sayfa alındı ✅\n\n` +
+        `Bu belgenin başka sayfası varsa gönderebilirsiniz, hepsi bittiyse *"bitti"* yazmanız yeterli.`
+    );
+    return;
+  }
+
+  session.satisBelgeler.push({
+    dosyaAdi: eslesenSoru.dosyaAdi,
+    mimeType: gercekMimeType,
+    veriBase64: buffer.toString("base64")
+  });
+  session.satisBelgeTamamlanan = session.satisBelgeTamamlanan || [];
+  session.satisBelgeTamamlanan.push(eslesenSoru.id);
+
+  await belgeTamamlandiMesajiGonderVeDevamEt(from, session, eslesenSoru, `"${belgeKisaEtiket(eslesenSoru)}" alındı`);
+}
+
+// belgeFotografiIsle ve "bitti" komutu tarafindan paylasilan ORTAK kapanis
+// adimi: bir belge (tekli ya da coktan tamamlanmis cok sayfali) tamamlandi
+// olarak isaretlendikten SONRA cagrilir - butun belgeler bittiyse satisTamamla'yi
+// tetikler, bitmediyse kalan belgeleri hatirlatir. onEkMesaj, onay cumlesinin
+// basina eklenen kisa aciklama (orn. "\"X\" alındı" ya da "3. sayfa alındı,
+// azami sayfa sayısına ulaşıldı").
+async function belgeTamamlandiMesajiGonderVeDevamEt(from, session, eslesenSoru, onEkMesaj) {
+  const kalanSonrasi = kalanBelgeSorulariniBul(session);
+  if (kalanSonrasi.length === 0) {
+    await sendText(from, `${onEkMesaj} ✅ Tüm belgeler tamamlandı, hazırlıyorum...`);
+    session.satisSoruIndex = session.satisSorular.length;
+    await satisTamamla(from, session);
+    return;
+  }
+
+  // satisSoruIndex'i, kalan (henuz kabul edilmemis) sorularin dizideki EN
+  // KUCUK index'ine guncelliyoruz - boylece "geri al" ve bu adimda metin
+  // yaziIrsa gosterilen uyari gibi index'e bagli diger kod parcalari,
+  // belgeler karisik sirada kabul edilse bile tutarli kalmaya devam eder.
+  session.satisSoruIndex = session.satisSorular.indexOf(kalanSonrasi[0]);
+
+  const beklenenler = kalanSonrasi.map((s) => `• ${belgeKisaEtiket(s)}`).join("\n");
+  await sendText(
+    from,
+    `${onEkMesaj} ✅\n\nKalan belgeler:\n${beklenenler}\n\nHepsini art arda (aramızda beklemeden) gönderebilirsiniz.`
+  );
+}
+
 async function handleAdvisorMessage(from, parsed) {
   const session = getSession(from);
 
@@ -1882,76 +2514,38 @@ async function handleAdvisorMessage(from, parsed) {
       return;
     }
 
-    // Satis kaydi akisinda, "tekli_foto_belge" tipi soru bekleniyorsa (KVKK
-    // metni, imza karti, yerlesim yeri belgesi, kimlik on/arka yuz) belge
-    // fotografini once Claude gorsel analiziyle kontrol edip (net mi, dogru
-    // belge mi, imzaGerekli isaretliyse gercekten doldurulup imzalanmis mi)
-    // sonra kabul ediyoruz.
+    // Satis kaydi akisinda, en az bir "tekli_foto_belge" tipi soru
+    // bekleniyorsa (KVKK metni, imza karti, yerlesim yeri belgesi, kimlik on/
+    // arka yuz - sigortalidan ve/veya sigorta ettirenden) belge fotografini
+    // once Claude gorsel analiziyle kontrol edip (net mi, dogru belge mi,
+    // imzaGerekli isaretliyse gercekten doldurulup imzalanmis mi) sonra kabul
+    // ediyoruz.
+    //
+    // NOT (24.07.2026 - "sırayla tek tek göndermek zorunda kalmasın kimse"):
+    // belgeler artik KESIN bir sirayla gelmek zorunda degil - danisman/musteri
+    // hepsini art arda gonderebilir. Hangi fotografin hangi bekleyen belgeye
+    // ait oldugu belgeFotografiIsle tarafindan otomatik tespit ediliyor;
+    // ayni numaradan nerdeyse ayni anda gelen fotograflarin birbirine
+    // KARISMAMASI icin de belgeIslemSirayaAl ile sirayla (bir onceki
+    // fotografin islemi tamamen bitmeden digeri baslamadan) isleniyor.
     if (session.state === "DANISMAN_SATIS_SORU" || session.state === "MUSTERI_SATIS_SORU") {
       const soru = session.satisSorular[session.satisSoruIndex];
-      if (soru && soru.type === "tekli_foto_belge") {
+      if (soru && belgeSorusuMu(soru)) {
         if (!parsed.mimeType || !parsed.mimeType.startsWith("image/")) {
           await sendText(from, "Bu adımda bir PDF/döküman değil, fotoğraf göndermeniz gerekiyor. Lütfen fotoğraf olarak gönderir misiniz? 📸");
           return;
         }
-        try {
-          const { buffer, mimeType } = await mediaIndir(parsed.mediaId);
-          const gercekMimeType = parsed.mimeType || mimeType;
-
-          await sendText(from, "Fotoğrafınızı inceliyorum, bir saniye... 🔍");
-          let analiz = null;
+        await belgeIslemSirayaAl(from, async () => {
           try {
-            analiz = await belgeFotografiAnalizEt(buffer, gercekMimeType, soru.beklenenBelge, soru.imzaGerekli);
+            const { buffer, mimeType } = await mediaIndir(parsed.mediaId);
+            const gercekMimeType = parsed.mimeType || mimeType;
+            await sendText(from, "Fotoğrafınızı inceliyorum, bir saniye... 🔍");
+            await belgeFotografiIsle(from, session, buffer, gercekMimeType);
           } catch (err) {
-            // Analiz basarisiz olursa (orn. ANTHROPIC_API_KEY tanimli degil ya
-            // da gecici bir API sorunu) kontrolu atlayip belgeyi normal kabul
-            // ediyoruz - gecici bir aksama satis surecini durdurmasin.
-            console.error("Belge foto analizi yapilamadi (belge yine de kabul edildi):", err.message);
+            console.error("Satis belgesi indirilemedi:", err?.response?.data || err.message);
+            await sendText(from, "Belgeyi kaydederken bir sorun oluştu, tekrar gönderir misiniz?");
           }
-
-          if (analiz && !analiz.netMi) {
-            await sendText(
-              from,
-              `Fotoğraf yeterince net görünmüyor 😕 ${analiz.aciklama || ""}\n\nDaha iyi ışıkta, net bir şekilde tekrar çeker misiniz?`
-            );
-            return;
-          }
-          if (analiz && !analiz.dogruBelgeMi) {
-            await sendText(
-              from,
-              `Bu fotoğraf beklediğim belgeye benzemiyor 🤔 ${analiz.aciklama || ""}\n\nLütfen doğru belgenin fotoğrafını gönderir misiniz?`
-            );
-            return;
-          }
-          if (analiz && soru.imzaGerekli && !analiz.imzaliMi) {
-            await sendText(
-              from,
-              `Bu belge boş/imzasız bir şablon gibi görünüyor 🤔 ${analiz.aciklama || ""}\n\nLütfen ${hitapEt(session.satisAnswers, `${sigortaliUnvani(session.satisAnswers, false)}ya doldurtup imzalattığınız`, "doldurup imzaladığınız")} belgenin fotoğrafını gönderir misiniz?`
-            );
-            return;
-          }
-
-          session.satisBelgeler.push({
-            dosyaAdi: soru.dosyaAdi,
-            mimeType: gercekMimeType,
-            veriBase64: buffer.toString("base64")
-          });
-          await sendText(from, "Belge alındı ✅");
-
-          session.satisSoruIndex = sonrakiGecerliIndex(
-            session.satisSorular,
-            session.satisAnswers,
-            session.satisSoruIndex + 1
-          );
-          if (session.satisSoruIndex >= session.satisSorular.length) {
-            await satisTamamla(from, session);
-          } else {
-            await satisSoruSor(from, session);
-          }
-        } catch (err) {
-          console.error("Satis belgesi indirilemedi:", err?.response?.data || err.message);
-          await sendText(from, "Belgeyi kaydederken bir sorun oluştu, tekrar gönderir misiniz?");
-        }
+        });
         return;
       }
     }
@@ -2065,11 +2659,14 @@ async function handleAdvisorMessage(from, parsed) {
       // eslesmeyebilir - matchOption ile (kismi/onek eslesmesi) dogru
       // secenegi geri buluyoruz.
       userText = matchOption(userText, ANA_MENU_SECENEKLERI) || userText;
-      if (userText === "Yeni İş Talebi") {
+      // Menu etiketleri 24.07.2026 geri bildirimiyle degisti: "Yeni İş
+      // Talebi" -> "Elementer Teklif Al", "BES Hayat Satış" -> "BES Hayat
+      // Başvurusu" (fonksiyon adlari/ic mantik degismedi, sadece gorunen metin).
+      if (userText === "Elementer Teklif Al") {
         await yeniTalepUrunSec(from, session);
         return;
       }
-      if (userText === "BES Hayat Satış") {
+      if (userText === "BES Hayat Başvurusu") {
         await satisBaslat(from, session);
         return;
       }
@@ -2139,11 +2736,8 @@ async function handleAdvisorMessage(from, parsed) {
         return;
       }
       if (userText === "Aktarım") {
-        await sendText(
-          from,
-          "🛠️ BES Aktarım akışı yakında eklenecek. Şimdilik sadece Yeni İş için satış kaydı oluşturabiliyoruz."
-        );
-        await devamMenuGoster(from, session);
+        await sendText(from, "📝 Bireysel Emeklilik Sistemi (BES) - Aktarım satış kaydı başlatıyoruz.");
+        await satisAkisiBaslat(from, session, "bes_aktarim", SATIS_SORULARI_BES_AKTARIM);
         return;
       }
       await sendButtons(from, "BES için Yeni İş mi, yoksa Aktarım mı?", ["Yeni İş", "Aktarım"]);
@@ -2389,6 +2983,28 @@ async function handleAdvisorMessage(from, parsed) {
     // uzerinden zaten otomatik cozuluyor.
     case "DANISMAN_SATIS_SORU":
     case "MUSTERI_SATIS_SORU": {
+      // "bitti"/"tamam" - su an sayfa sayfa yuklenmekte olan (en az 1 sayfasi
+      // kabul edilmis ama azami sayfa sayisina henuz ulasilmamis) bir cok
+      // sayfali belge varsa (orn. Hesap Ozeti Cetveli), bu komut o belgeyi
+      // tamamlanmis sayar ve akisa devam eder. Boyle bir belge yoksa (orn.
+      // kullanici baska bir soruya "tamam" yazdiysa) bu blok atlanir ve
+      // metin normal soru cevabi olarak islenmeye devam eder.
+      if (BELGE_BITTI_REGEX.test(userText)) {
+        const acikBelge = devamEdenCokSayfaliBelgeyiBul(session);
+        if (acikBelge) {
+          session.satisBelgeTamamlanan = session.satisBelgeTamamlanan || [];
+          session.satisBelgeTamamlanan.push(acikBelge.id);
+          const sayfaSayisi = (session.satisCokSayfaliSayilar && session.satisCokSayfaliSayilar[acikBelge.id]) || 0;
+          await belgeTamamlandiMesajiGonderVeDevamEt(
+            from,
+            session,
+            acikBelge,
+            `"${belgeKisaEtiket(acikBelge)}" tamamlandı (${sayfaSayisi} sayfa)`
+          );
+          return;
+        }
+      }
+
       // "geri al" - bir onceki soruda yazdigi/sectigi cevabi duzeltmek
       // isterse (orn. eposta yanlis yazildiysa), bir onceki gecerli (skipIf
       // ile atlanmamis) soruya donup o soruyu tekrar sorar.
@@ -2406,6 +3022,24 @@ async function handleAdvisorMessage(from, parsed) {
         if (oncekiSoru.type === "tekli_foto_belge") {
           const belgeIdx = session.satisBelgeler.findIndex((b) => b.dosyaAdi === oncekiSoru.dosyaAdi);
           if (belgeIdx >= 0) session.satisBelgeler.splice(belgeIdx, 1);
+          // Belgeler artik sirayla degil id'ye gore takip edildigi icin
+          // (bkz. kalanBelgeSorulariniBul), "tamamlandi" listesinden de
+          // cikarmamiz lazim - yoksa bu belge hala "kabul edilmis" sayılıp
+          // tekrar istenemez.
+          if (session.satisBelgeTamamlanan) {
+            session.satisBelgeTamamlanan = session.satisBelgeTamamlanan.filter((id) => id !== oncekiSoru.id);
+          }
+        } else if (oncekiSoru.type === "cok_sayfali_foto_belge") {
+          // Cok sayfali belgenin TUM sayfalarini (dosyaAdi_1, dosyaAdi_2, ...)
+          // kaldiriyoruz ve sayfa sayacini sifirliyoruz ki belge basindan
+          // tekrar yuklenebilsin.
+          session.satisBelgeler = session.satisBelgeler.filter(
+            (b) => !b.dosyaAdi.startsWith(`${oncekiSoru.dosyaAdi}_`)
+          );
+          if (session.satisCokSayfaliSayilar) session.satisCokSayfaliSayilar[oncekiSoru.id] = 0;
+          if (session.satisBelgeTamamlanan) {
+            session.satisBelgeTamamlanan = session.satisBelgeTamamlanan.filter((id) => id !== oncekiSoru.id);
+          }
         } else {
           delete session.satisAnswers[oncekiSoru.id];
         }
@@ -2420,6 +3054,18 @@ async function handleAdvisorMessage(from, parsed) {
       if (soru.type === "tekli_foto_belge") {
         const metin = typeof soru.text === "function" ? soru.text(session.satisAnswers) : soru.text;
         await sendText(from, `Bu adımda bir fotoğraf göndermenizi bekliyorum 📸\n\n${metin}`);
+        return;
+      }
+
+      if (soru.type === "cok_sayfali_foto_belge") {
+        const sayfaSayisi = (session.satisCokSayfaliSayilar && session.satisCokSayfaliSayilar[soru.id]) || 0;
+        const metin = typeof soru.text === "function" ? soru.text(session.satisAnswers) : soru.text;
+        await sendText(
+          from,
+          sayfaSayisi > 0
+            ? `Bu belgenin başka sayfası varsa fotoğrafını gönderebilirsiniz, hepsi bittiyse *"bitti"* yazmanız yeterli 📸`
+            : `Bu adımda bir fotoğraf göndermenizi bekliyorum 📸\n\n${metin}`
+        );
         return;
       }
 
