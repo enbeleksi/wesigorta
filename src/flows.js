@@ -69,7 +69,13 @@ const TC_KIMLIK_SORU = {
   type: "text",
   validate: tcKimlikGecerliMi,
   validationError:
-    "Girdiğiniz T.C. kimlik numarası geçerli görünmüyor, lütfen 11 haneli olarak tekrar yazar mısınız?"
+    "Girdiğiniz T.C. kimlik numarası geçerli görünmüyor, lütfen 11 haneli olarak tekrar yazar mısınız?",
+  // Bu soru ACIKCA musterinin KENDI T.C. kimligini soruyor (RUHSAT_SAHIBI_TC_SORU'nun
+  // aksine - orada arac/ruhsat baskasina ait olabilir). Bu yuzden SADECE burada
+  // kaliciProfilAlani isaretlenir: conversationEngine.js bu cevabi musterinin
+  // kalici profiline (musteriProfilStore) kaydedip, bir sonraki HER urunde
+  // otomatik doldurur, boylece ayni musteriye TC'si bir daha sorulmaz.
+  kaliciProfilAlani: "tcKimlik"
 };
 
 // Trafik/Kasko'da sorulan TC, hesap sahibinin degil ruhsat sahibinin TC'sidir

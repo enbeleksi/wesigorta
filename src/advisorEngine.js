@@ -46,6 +46,11 @@ const { fonGetirileriniGetir } = require("./tefasGetiriAnaliz");
 // icin, yenileme eklerken ayrica plaka soruyoruz (diger urunlerde anlamsiz).
 const PLAKA_ISTENEN_URUN_ETIKETLERI = ["Trafik Sigortası", "Kasko Sigortası"];
 
+// Bir satis GERCEKTEN Garanti Emeklilik'e iletildikten (bkz. satisTamamla'daki
+// mailSonucu.basarili kontrolu) kac ms sonra musteriye memnuniyet/kalite
+// kontrolu mesaji gonderilecegi (bkz. server.js'deki memnuniyetAnketleriniKontrolEt).
+const MEMNUNIYET_ANKETI_GECIKME_MS = 3 * 24 * 60 * 60 * 1000; // 3 gun
+
 // Bir talebin/kaydin "urun" alanindaki serbest metinden (orn. "Standart Prim
 // İadeli Hayat Sigortası") hangi flows.js urunune ait oldugunu bulur -
 // Satis Kaydi gibi akislarda urun adi paket ismiyle birlestirilip
@@ -1740,6 +1745,16 @@ async function satisTamamla(from, session) {
       // (Musteri kendi kendine basvurduysa bu ayrica bildirime gerek yok -
       // yukaridaki tamamlanma mesaji zaten dogrudan kendisine gidiyor.)
       await musteriyeSatisBildirimiGonder(a, urunAdiTam);
+
+      // 26.07.2026 eklendi: satis GERCEKTEN Garanti Emeklilik'e iletildigi
+      // icin (bu dal - musteri-kendi-kendine degil VE mail basarili), birkac
+      // gun sonra musteriye bir memnuniyet/kalite kontrolu mesaji gonderilmek
+      // uzere zamanlaniyor (bkz. server.js'deki memnuniyetAnketleriniKontrolEt).
+      // Musteri-kendi-kendine basvurdugunda BUNU YAPMIYORUZ - o durumda
+      // Garanti Emeklilik'e HENUZ hicbir sey gitmedi (sadece ekip onayi
+      // icin bir mail gitti), ekip once elle inceleyip Garanti Emeklilik'e
+      // iletecek - o noktada bu kod tarafindan otomatik takip edilmiyor.
+      leadStore.memnuniyetAnketiKur(yeniLead.id, Date.now() + MEMNUNIYET_ANKETI_GECIKME_MS);
     }
   } else if (musteriKendiKendine) {
     // Onay maili (Enbel'e) gitmedi - Garanti Emeklilik'e zaten hic

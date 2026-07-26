@@ -29,6 +29,12 @@ function yeniYenilemeOlustur({ danismanNumarasi, danismanAdi, musteriAdi, urun, 
     plaka: plaka || null,
     bitisTarihi, // ms cinsinden (validators.tarihiMsYap ile uretilir)
     kaynak: kaynak || "danisman", // "danisman" | "excel_import"
+    // 26.07.2026 eklendi: bu yenilemenin bitis tarihine YENILEME_BEKLEYEN_IS_ESIK_GUN
+    // (bkz. server.js) kala, OTOMATIK olarak leadStore'da bir "Bekleyen İş"
+    // (Açık talep) olusturuldu mu? (bkz. server.js'deki yenilemeleriBekleyenIseAktar).
+    // Danismanin kendi WhatsApp menusunden MANUEL bakmasi (yenilemelerimGoster)
+    // bu alani ETKILEMEZ - o hala her zaman TUM yaklasanlari gosterir.
+    bekleyenIseAktarildiMi: false,
     olusturulmaZamani: Date.now()
   };
   yenilemeler.set(id, kayit);
@@ -53,6 +59,24 @@ function yaklasanYenilemeleriGetir(gunSayisi = 30, danismanNumarasi = null) {
   });
 }
 
+// Bitis tarihine "esikGunSayisi" (varsayilan 15) gun ya da daha az kalmis VE
+// henuz bir "Bekleyen İş" kaydina DONUSTURULMEMIS (bekleyenIseAktarildiMi:
+// false) yenilemeleri doner - bkz. server.js'deki yenilemeleriBekleyenIseAktar.
+// Gecmiste kalmis (suresi zaten gecmis) kayitlar da dahildir - leadStore'daki
+// hatirlatma/memnuniyet anketi mantigiyla AYNI ilke: gecikmis bir sey
+// sessizce atlanmaz, ilk firsatta (bir sonraki kontrol dongusunde) islenir.
+function zamaniGelenYenilemeler(esikGunSayisi = 15) {
+  const GUN_MS = 24 * 60 * 60 * 1000;
+  const ufukTarihi = Date.now() + esikGunSayisi * GUN_MS;
+  return tumYenilemeleriGetir().filter((y) => !y.bekleyenIseAktarildiMi && y.bitisTarihi <= ufukTarihi);
+}
+
+function yenilemeBekleyenIseAktarildiIsaretle(id) {
+  const kayit = yenilemeler.get(id);
+  if (!kayit) return;
+  kayit.bekleyenIseAktarildiMi = true;
+}
+
 // Sunucu baslarken bir kez cagrilir - DB'de kayitli yenilemeler varsa belleğe yukler.
 async function yukle() {
   const veri = await db.oku("yenilemeler");
@@ -72,6 +96,8 @@ module.exports = {
   yeniYenilemeOlustur,
   tumYenilemeleriGetir,
   yaklasanYenilemeleriGetir,
+  zamaniGelenYenilemeler,
+  yenilemeBekleyenIseAktarildiIsaretle,
   yukle,
   kaydet
 };

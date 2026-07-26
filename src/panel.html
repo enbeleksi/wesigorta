@@ -71,6 +71,14 @@
   .barRow .barFill { background: #2F6690; height: 100%; }
   .barRow .barCount { width: 28px; text-align: right; color: #666; }
 
+  /* Ekip performansi gorunumu (sadece Enbel gorebilir) */
+  #ekipView { flex: 1; overflow-y: auto; padding: 20px; }
+  #ekipTable { width: 100%; border-collapse: collapse; background: #fff; border-radius: 10px; overflow: hidden; box-shadow: 0 1px 2px rgba(0,0,0,0.08); }
+  #ekipTable th, #ekipTable td { padding: 10px 14px; text-align: left; font-size: 13px; border-bottom: 1px solid #eee; }
+  #ekipTable th { background: #16324F; color: #fff; font-weight: 600; }
+  #ekipTable tr:last-child td { border-bottom: none; }
+  #ekipTable td.sayi { text-align: center; }
+
   /* Dokumanlar gorunumu */
   #docsView { flex: 1; overflow-y: auto; padding: 20px; }
   .docRow { background: #fff; border-radius: 10px; padding: 14px 18px; margin-bottom: 10px; box-shadow: 0 1px 2px rgba(0,0,0,0.08); display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
@@ -89,6 +97,7 @@
   <button id="tabKonusmalar" class="active">💬 WhatsApp</button>
   <button id="tabTalepler">📋 Talepler</button>
   <button id="tabIstatistik">📊 İstatistikler</button>
+  <button id="tabEkip" style="display:none;">👥 Ekip Performansı</button>
   <button id="tabDokumanlar">📄 Dokümanlar</button>
 </div>
 
@@ -104,6 +113,7 @@
 
 <div id="leadsView" style="display:none;"></div>
 <div id="statsView" style="display:none;"></div>
+<div id="ekipView" style="display:none;"></div>
 <div id="docsView" style="display:none;"></div>
 </div>
 
@@ -252,6 +262,8 @@ async function poll() {
     await renderLeadsView();
   } else if (currentTab === 'istatistik') {
     await renderStatsView();
+  } else if (currentTab === 'ekip') {
+    await renderEkipView();
   } else if (currentTab === 'dokumanlar') {
     await renderDocsView();
   }
@@ -265,6 +277,7 @@ function sekmeGoster(sekme) {
   document.getElementById('tabKonusmalar').classList.toggle('active', sekme === 'konusmalar');
   document.getElementById('tabTalepler').classList.toggle('active', sekme === 'talepler');
   document.getElementById('tabIstatistik').classList.toggle('active', sekme === 'istatistik');
+  document.getElementById('tabEkip').classList.toggle('active', sekme === 'ekip');
   document.getElementById('tabDokumanlar').classList.toggle('active', sekme === 'dokumanlar');
 
   const konusmaGorunumu = sekme === 'konusmalar';
@@ -273,6 +286,7 @@ function sekmeGoster(sekme) {
   document.getElementById('main').style.display = konusmaGorunumu ? 'flex' : 'none';
   document.getElementById('leadsView').style.display = sekme === 'talepler' ? 'block' : 'none';
   document.getElementById('statsView').style.display = sekme === 'istatistik' ? 'block' : 'none';
+  document.getElementById('ekipView').style.display = sekme === 'ekip' ? 'block' : 'none';
   document.getElementById('docsView').style.display = sekme === 'dokumanlar' ? 'block' : 'none';
   poll();
 }
@@ -280,7 +294,25 @@ function sekmeGoster(sekme) {
 document.getElementById('tabKonusmalar').onclick = () => sekmeGoster('konusmalar');
 document.getElementById('tabTalepler').onclick = () => sekmeGoster('talepler');
 document.getElementById('tabIstatistik').onclick = () => sekmeGoster('istatistik');
+document.getElementById('tabEkip').onclick = () => sekmeGoster('ekip');
 document.getElementById('tabDokumanlar').onclick = () => sekmeGoster('dokumanlar');
+
+// "Ekip Performansı" sekmesi SADECE Enbel'e gorunur (bkz. server.js
+// /api/panel/ekip-ozeti'ndeki yetki kontrolu) - once giren kisinin kim
+// oldugunu sorup, Enbel ise sekmeyi gosteriyoruz. Baska bir kullanici
+// (orn. Bahadır) icin sekme hic gorunmez, arka planda da erisim zaten 403 doner.
+(async function ekipSekmesiniGerekirseGoster() {
+  try {
+    const res = await fetch('/api/panel/ben');
+    if (!res.ok) return;
+    const ben = await res.json();
+    if (ben.kullaniciAdi === 'enbeleksi') {
+      document.getElementById('tabEkip').style.display = 'inline-block';
+    }
+  } catch (err) {
+    // Sessizce yut - sekme gizli kalir, kritik bir hata degil.
+  }
+})();
 
 // --- Dokumanlar gorunumu ---
 async function fetchDocs() {
@@ -382,8 +414,65 @@ async function renderStatsView() {
   `;
 }
 
+// --- Ekip performans ozeti (sadece Enbel gorebilir) ---
+async function fetchEkipOzeti() {
+  const res = await fetch('/api/panel/ekip-ozeti');
+  if (!res.ok) return null;
+  return res.json();
+}
+
+async function renderEkipView() {
+  const view = document.getElementById('ekipView');
+  const veri = await fetchEkipOzeti();
+  if (!veri) {
+    view.innerHTML = '<p style="color:#999;">Bu görünümü görüntüleme yetkiniz yok.</p>';
+    return;
+  }
+
+  const primFormatla = (n) => n.toLocaleString('tr-TR', { maximumFractionDigits: 0 }) + ' ₺';
+
+  const satirlar = veri.ekip.map((d) => `
+    <tr>
+      <td>${escapeHtml(d.danismanAdi)}</td>
+      <td class="sayi">${d.toplamTalep}</td>
+      <td class="sayi">${d.buAyTalep}</td>
+      <td class="sayi">${d.acikSayisi}</td>
+      <td class="sayi">${d.olumluToplam}</td>
+      <td class="sayi">${d.olumsuzToplam}</td>
+      <td class="sayi">${d.donusumOrani === null ? '—' : d.donusumOrani + '%'}</td>
+      <td class="sayi">${d.toplamNetPrim ? primFormatla(d.toplamNetPrim) : '—'}</td>
+    </tr>
+  `).join('') || '<tr><td colspan="8" style="color:#999; text-align:center;">Henüz veri yok.</td></tr>';
+
+  view.innerHTML = `
+    <h2 style="margin-top:0;">Ekip Performansı</h2>
+    <p style="color:#666; font-size:13px; margin-bottom:16px;">Tüm danışmanların talep hacmi ve dönüşüm oranlarını karşılaştırın. "Toplam Net Prim" sadece Excel'den aktarılan geçmiş üretim ve tamamlanan satışlar için hesaplanır.</p>
+    <table id="ekipTable">
+      <thead>
+        <tr>
+          <th>Danışman</th>
+          <th>Toplam Talep</th>
+          <th>Bu Ay</th>
+          <th>Açık</th>
+          <th>Olumlu Kapanan</th>
+          <th>Olumsuz Kapanan</th>
+          <th>Dönüşüm Oranı</th>
+          <th>Toplam Net Prim</th>
+        </tr>
+      </thead>
+      <tbody>${satirlar}</tbody>
+    </table>
+  `;
+}
+
 // --- Talepler (leads) gorunumu ---
 let leadsFiltre = 'Hepsi';
+// Arama/danisman filtreleri: renderLeadsView her 4 saniyede bir (poll ile)
+// yeniden cagrildigi icin, bu degerleri modul-seviyesinde (fonksiyon disinda)
+// tutuyoruz - boylece kullanici arama kutusuna yazarken bir sonraki poll'de
+// yazdigi metin kaybolmuyor (asagida ayrica odak/imlec konumu da korunuyor).
+let leadsArama = '';
+let leadsDanismanFiltre = 'Hepsi';
 
 async function fetchLeads() {
   const res = await fetch('/api/panel/leads');
@@ -404,13 +493,36 @@ function badgeClass(durum) {
 }
 
 async function renderLeadsView() {
+  // Arama kutusu su an odaktaysa (kullanici yaziyorsa), yeniden ciziminden
+  // sonra odagi ve imlec konumunu geri koyacagiz - aksi halde her poll
+  // dongusunde (4 saniyede bir) odak/yazilan metin kaybolurdu.
+  const oncekiSearchInput = document.getElementById('leadsSearchInput');
+  const aramaOdaktaydiMi = document.activeElement === oncekiSearchInput;
+  const imlecKonumu = aramaOdaktaydiMi ? oncekiSearchInput.selectionStart : null;
+
   const { leads, durumlar } = await fetchLeads();
   const view = document.getElementById('leadsView');
 
-  const filtreliLeads = leadsFiltre === 'Hepsi' ? leads : leads.filter(l => l.durum === leadsFiltre);
+  const danismanlar = ['Hepsi', ...new Set(leads.map(l => l.danismanAdi).filter(Boolean))];
+
+  const aramaMetni = leadsArama.trim().toLocaleLowerCase('tr-TR');
+  // Once durum haric diger filtreleri (danisman + arama) uygularız - durum
+  // butonlarindaki sayaclar da bu alt kumeye gore hesaplanir, boylece
+  // "su an secili danisman/arama icin kac tane Acik/Olumlu var" gorunur.
+  const digerFiltrelerUygulanmis = leads.filter(l => {
+    const danismanUyuyor = leadsDanismanFiltre === 'Hepsi' || l.danismanAdi === leadsDanismanFiltre;
+    const aramaUyuyor =
+      !aramaMetni ||
+      (l.musteriAdi || '').toLocaleLowerCase('tr-TR').includes(aramaMetni) ||
+      (l.telefon || '').includes(aramaMetni);
+    return danismanUyuyor && aramaUyuyor;
+  });
+
+  const filtreliLeads =
+    leadsFiltre === 'Hepsi' ? digerFiltrelerUygulanmis : digerFiltrelerUygulanmis.filter(l => l.durum === leadsFiltre);
 
   const filtreBar = ['Hepsi', ...durumlar].map(d =>
-    `<button class="${d === leadsFiltre ? 'active' : ''}" data-durum="${escapeHtml(d)}">${escapeHtml(d)} ${d !== 'Hepsi' ? '(' + leads.filter(l => l.durum === d).length + ')' : '(' + leads.length + ')'}</button>`
+    `<button class="${d === leadsFiltre ? 'active' : ''}" data-durum="${escapeHtml(d)}">${escapeHtml(d)} ${d !== 'Hepsi' ? '(' + digerFiltrelerUygulanmis.filter(l => l.durum === d).length + ')' : '(' + digerFiltrelerUygulanmis.length + ')'}</button>`
   ).join('');
 
   const kartlar = filtreliLeads.map(lead => {
@@ -460,9 +572,39 @@ async function renderLeadsView() {
 
   view.innerHTML = `
     <h2 style="margin-top:0;">Talepler</h2>
+    <div id="leadsSearchBar" style="display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap;">
+      <input type="text" id="leadsSearchInput" placeholder="🔍 İsim veya telefon ara..."
+        value="${escapeHtml(leadsArama)}"
+        style="flex:1; min-width:200px; padding:8px 14px; border-radius:16px; border:1px solid #ccc; font-size:13px;" />
+      <select id="leadsDanismanSelect" style="padding:8px 14px; border-radius:16px; border:1px solid #ccc; font-size:13px;">
+        ${danismanlar
+          .map(
+            (d) =>
+              `<option value="${escapeHtml(d)}" ${d === leadsDanismanFiltre ? 'selected' : ''}>${
+                d === 'Hepsi' ? 'Tüm Danışmanlar' : escapeHtml(d)
+              }</option>`
+          )
+          .join('')}
+      </select>
+    </div>
     <div id="leadsFilters">${filtreBar}</div>
     ${kartlar}
   `;
+
+  const yeniSearchInput = document.getElementById('leadsSearchInput');
+  yeniSearchInput.oninput = () => {
+    leadsArama = yeniSearchInput.value;
+    renderLeadsView();
+  };
+  if (aramaOdaktaydiMi) {
+    yeniSearchInput.focus();
+    if (imlecKonumu !== null) yeniSearchInput.setSelectionRange(imlecKonumu, imlecKonumu);
+  }
+
+  document.getElementById('leadsDanismanSelect').onchange = (e) => {
+    leadsDanismanFiltre = e.target.value;
+    renderLeadsView();
+  };
 
   view.querySelectorAll('#leadsFilters button').forEach(btn => {
     btn.onclick = () => {

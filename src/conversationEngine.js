@@ -4,6 +4,8 @@ const { ruhsatFotografiAnalizEt } = require("./ruhsatAnaliz");
 const { garantiEmekliligeGonder } = require("./eposta");
 const messageLog = require("./messageLog");
 const leadStore = require("./leadStore");
+const musteriProfilStore = require("./musteriProfilStore");
+const sozlukSSS = require("./sozlukSSS");
 const flows = require("./flows");
 
 const PRODUCT_KEYS = Object.keys(flows);
@@ -144,6 +146,17 @@ async function startProductFlow(from, session, productKey, { skipIntro = false }
     session.answers.ad_soyad = session.name;
   }
 
+  // Musterinin KENDI T.C. kimlik numarasi (arac/ruhsat sahibi TC'si DEGIL -
+  // sadece question.kaliciProfilAlani === "tcKimlik" ile isaretli bare soru,
+  // bkz. flows.js ve musteriProfilStore.js'deki aciklamalar) daha once kalici
+  // profile kaydedilmisse, bu urunde de ayni tur soru varsa tekrar sormadan
+  // onceden dolduruyoruz.
+  const kaliciProfil = musteriProfilStore.profilGetir(from);
+  const tcKimlikSorusu = flow.questions.find((q) => q.kaliciProfilAlani === "tcKimlik");
+  if (kaliciProfil && kaliciProfil.tcKimlik && tcKimlikSorusu) {
+    session.answers[tcKimlikSorusu.id] = kaliciProfil.tcKimlik;
+  }
+
   session.questionIndex = nextValidIndex(flow, session.answers, 0);
   session.state = "ASKING";
 
@@ -166,19 +179,34 @@ async function baslaYeniKonusma(from, session, userText, oncekiIsim) {
   const matchedKey = PRODUCT_KEYS.find(
     (key) => flows[key].qrTrigger && flows[key].qrTrigger.test(userText)
   );
-  const ilkAd = oncekiIsim ? oncekiIsim.trim().split(/\s+/)[0] : null;
+
+  // oncekiIsim parametre olarak verilmediyse (orn. sunucu yeniden basladiktan
+  // sonra, uzun bir aradan sonra, ya da "iptal" sonrasi TAMAMEN yeni/bos bir
+  // session'da), kalici musteri profiline (musteriProfilStore) bakariz - orada
+  // bir isim kayitliysa bu musteri bizimle DAHA ONCE (gunler/haftalar once de
+  // olsa) konusmus demektir.
+  const kaliciProfil = musteriProfilStore.profilGetir(from);
+  const bilinenIsim = oncekiIsim || (kaliciProfil && kaliciProfil.adSoyad) || null;
+  const ilkAd = bilinenIsim ? bilinenIsim.trim().split(/\s+/)[0] : null;
 
   // Ismi zaten biliyorsak (donen musteri), session.name'i simdiden dolduruyoruz.
   // Bu sayede hem KVKK sonrasi tekrar isim sorulmaz, hem de QR akisinda urunun
   // kendi "ad_soyad" sorusu (sameAsAccountHolder ile) otomatik atlanir.
-  if (oncekiIsim) {
-    session.name = oncekiIsim;
+  if (bilinenIsim) {
+    session.name = bilinenIsim;
   }
 
   if (matchedKey) {
     session.pendingProduct = matchedKey;
     await sendText(from, flows[matchedKey].qrGreeting);
   } else if (ilkAd) {
+    // Musteriyi kayitli ismiyle karsiliyoruz - ama bu telefon numarasinin hala
+    // GERCEKTEN ayni kisiye ait oldugundan emin degiliz (el degistirmis
+    // olabilir). isimTeyitBekleniyor bayragini isaretliyoruz: handleIncoming
+    // bu karsilamadan HEMEN SONRAKI ilk mesajda musteri "ben ... degilim" gibi
+    // bir sey soylerse, kalici kaydi silip musteriyi yeni musteri gibi
+    // ele alacak (bkz. handleIncoming basindaki kontrol).
+    session.isimTeyitBekleniyor = true;
     await sendText(
       from,
       `Merhaba ${ilkAd}! 😊 Yeni bir sigorta teklif talebiniz için bizi tekrar tercih ettiğiniz için teşekkür ederiz. Size nasıl yardımcı olabiliriz?`
@@ -190,8 +218,41 @@ async function baslaYeniKonusma(from, session, userText, oncekiIsim) {
     );
   }
 
+  // KVKK onayi bu musteriden (bu telefon numarasindan) DAHA ONCE zaten
+  // alinmis ve kalici profile kaydedilmisse, ayni onayi tekrar tekrar sormaya
+  // gerek yok - dogrudan isim/urun akisina geciyoruz.
+  if (kaliciProfil && kaliciProfil.kvkkOnayVerildi) {
+    await kvkkSonrasiDevamEt(from, session);
+    return;
+  }
+
   await sendChoiceQuestion(from, KVKK_METNI, KVKK_SECENEKLERI);
   session.state = "KVKK_CONSENT";
+}
+
+// KVKK onayindan hemen sonra (ya da onay bu musteriden daha once zaten
+// alinmis oldugu icin baslaYeniKonusma tarafindan dogrudan) yapilacak
+// yonlendirmeyi tek bir yerde toplar: QR'dan bekleyen bir urun varsa onun
+// sorularina, ismi zaten biliniyorsa direkt urun secimine, hicbiri yoksa
+// normal isim sorma adimina gecer.
+async function kvkkSonrasiDevamEt(from, session) {
+  if (session.pendingProduct) {
+    const key = session.pendingProduct;
+    session.pendingProduct = null;
+    const devredildi = await startProductFlow(from, session, key, { skipIntro: true });
+    if (!devredildi) await askCurrentQuestion(from, session);
+  } else if (session.name) {
+    session.state = "ASK_PRODUCT";
+    await sendList(
+      from,
+      `Hangi sigorta ürünü için teklif almak istersiniz?`,
+      "Ürün Seç",
+      PRODUCT_LABELS
+    );
+  } else {
+    session.state = "ASK_NAME";
+    await sendText(from, "Teşekkürler! 😊 Size hitap edebilmek adına isminizi ve soyisminizi öğrenebilir miyim?");
+  }
 }
 
 // Musteri "ismim Mahmut Yildirim", "İsmim Mahmut Yildirim" ya da "adim Mahmut
@@ -370,6 +431,31 @@ async function handleIncoming(from, message) {
     return;
   }
 
+  // Musteriyi kayitli ismiyle karsiladiktan HEMEN SONRAKI ilk mesajinda,
+  // musteri "ben Ahmet Yılmaz değilim" gibi bir seyle bu ismin kendisine ait
+  // OLMADIGINI belirtirse (telefon numarasi el degistirmis olabilir), o
+  // numaraya ait TUM kalici kaydi (musteriProfilStore) ve mevcut oturumu
+  // silip, hicbir sey bilmiyormus gibi sifirdan yeni bir musteri olarak
+  // karsiliyoruz. Eslesmezse (musteri normal sekilde devam ettiyse) bayragi
+  // sessizce temizleyip islemeye devam ediyoruz - bu kontrol SADECE
+  // karsilamadan hemen sonraki ilk mesaj icin gecerlidir.
+  if (session.isimTeyitBekleniyor) {
+    session.isimTeyitBekleniyor = false;
+    const KIMLIK_INKAR_KELIMELERI = ["degilim", "yanlis numara", "farkli biriyim", "baska biriyim", "baskasiyim"];
+    const normalizedIdentityText = normalizeTr(userText);
+    const kimlikInkarEdiliyorMu = KIMLIK_INKAR_KELIMELERI.some((k) => normalizedIdentityText.includes(k));
+    if (kimlikInkarEdiliyorMu) {
+      musteriProfilStore.profilSil(from);
+      resetSession(from);
+      await sendText(
+        from,
+        "Özür dileriz, karışıklığa mahal verdiğimiz için teşekkürler! 🙏"
+      );
+      await baslaYeniKonusma(from, getSession(from), userText);
+      return;
+    }
+  }
+
   // Musteri kendi kendine satis talebi akisindaysa (startProductFlow'un
   // "hayat"/"bes" icin advisorEngine'e devrettigi durum - bkz. o dosyadaki
   // musteriSatisBaslat), BUNDAN SONRAKI TUM mesajlari (metin/interaktif/
@@ -513,6 +599,24 @@ async function handleIncoming(from, message) {
         notifyMessage
       );
     }
+
+    // 26.07.2026 eklemesi: "temsilci" talebi eskiden panelde HİÇBİR iz
+    // bırakmıyordu - sadece bir WhatsApp bildirimi gidiyordu, o mesaj
+    // kaçırılırsa/gözden kaçarsa hiçbir yerde kaydı kalmıyordu. Artık tam
+    // bilgi toplanmış taleplerle AYNI şekilde bir "talep" (lead) olarak da
+    // paneldeki Talepler listesine düşüyor - böylece danışman/ekip panelden
+    // de görüp durumunu (Açık/Olumlu/Olumsuz) takip edebiliyor, gerekirse
+    // hatırlatma kurabiliyor.
+    const atananDanisman = flow && flow.advisors && flow.advisors.find((a) => a.number === agentNumber);
+    leadStore.yeniLeadOlustur({
+      telefon: from,
+      musteriAdi: session.name || "(isim henüz alınmadı)",
+      urun: flow ? flow.label : "Genel (ürün seçilmemiş)",
+      danismanAdi: atananDanisman ? atananDanisman.name : null,
+      danismanNumarasi: agentNumber || null,
+      ozet: 'Müşteri bir insanla görüşmek istedi ("temsilci" talebi).'
+    });
+
     return;
   }
 
@@ -555,6 +659,22 @@ async function handleIncoming(from, message) {
     }
     // Bir soru bekleniyorsa (ASKING asamasindaysak), kaldigi yerden devam
     // edebilsin diye o soruyu nazikce tekrar hatirlatiyoruz.
+    if (session.state === "ASKING") {
+      await askCurrentQuestion(from, session);
+    }
+    return;
+  }
+
+  // Musteri sigortacilikla ilgili bir terimin ya da sundugumuz urunlerden
+  // birinin ne oldugunu sorarsa (orn. "muafiyet nedir?", "kasko nedir?"),
+  // akisi bozmadan kisa bir aciklama veririz - yukaridaki SIRKET/ADRES
+  // kontrolleriyle AYNI davranis deseni. sozlukSSS.js'deki soru-kalibi sarti
+  // sayesinde, musteri urun secim listesinde sadece urun adini SECMEK icin
+  // yazdiginda (orn. ASK_PRODUCT asamasinda "Kasko Sigortası") bu
+  // YANLISLIKLA bir SSS cevabina donusmez.
+  const sssCevabi = sozlukSSS.sssCevabiBul(userText);
+  if (sssCevabi) {
+    await sendText(from, sssCevabi);
     if (session.state === "ASKING") {
       await askCurrentQuestion(from, session);
     }
@@ -606,31 +726,22 @@ async function handleIncoming(from, message) {
         break;
       }
 
-      // "Kabul Ediyorum": eger QR'dan gelen bir urun bekliyorsak direkt onun
-      // sorularina, ismi zaten biliyorsak (donen musteri) direkt urun secimine,
-      // hicbiri yoksa normal isim sorma adimina geciyoruz.
-      if (session.pendingProduct) {
-        const key = session.pendingProduct;
-        session.pendingProduct = null;
-        const devredildi = await startProductFlow(from, session, key, { skipIntro: true });
-        if (!devredildi) await askCurrentQuestion(from, session);
-      } else if (session.name) {
-        session.state = "ASK_PRODUCT";
-        await sendList(
-          from,
-          `Hangi sigorta ürünü için teklif almak istersiniz?`,
-          "Ürün Seç",
-          PRODUCT_LABELS
-        );
-      } else {
-        session.state = "ASK_NAME";
-        await sendText(from, "Teşekkürler! 😊 Size hitap edebilmek adına isminizi ve soyisminizi öğrenebilir miyim?");
-      }
+      // "Kabul Ediyorum": bu onayi kalici profile kaydediyoruz ki ayni
+      // musteriden bir daha ASLA KVKK onayi istemeyelim. Ardindan QR'dan
+      // gelen bir urun bekliyorsak direkt onun sorularina, ismi zaten
+      // biliyorsak (donen musteri) direkt urun secimine, hicbiri yoksa normal
+      // isim sorma adimina geciyoruz (bkz. kvkkSonrasiDevamEt).
+      musteriProfilStore.kvkkOnayVer(from);
+      await kvkkSonrasiDevamEt(from, session);
       break;
     }
 
     case "ASK_NAME": {
       session.name = isimCevabiniTemizle(userText);
+      // Ismi kalici profile de kaydediyoruz - boylece bu musteri gunler/haftalar
+      // sonra tekrar yazdiginda (oturum tamamen sifirlanmis olsa bile) ismiyle
+      // karsilanir ve isim tekrar sorulmaz.
+      musteriProfilStore.profilGuncelle(from, { adSoyad: session.name });
       session.state = "ASK_PRODUCT";
       await sendList(
         from,
@@ -720,6 +831,14 @@ async function handleIncoming(from, message) {
         }
         session.answers[currentQuestion.id] =
           currentQuestion.id === "ad_soyad" ? isimCevabiniTemizle(userText) : userText;
+
+        // Musterinin KENDI T.C. kimlik numarasini sordugumuz (arac/ruhsat
+        // sahibi TC'si DEGIL - bkz. flows.js/musteriProfilStore.js'deki
+        // kaliciProfilAlani aciklamalari) bare soru cevaplandiysa, kalici
+        // profile kaydediyoruz ki bir daha hicbir urunde tekrar sorulmasin.
+        if (currentQuestion.kaliciProfilAlani === "tcKimlik") {
+          musteriProfilStore.profilGuncelle(from, { tcKimlik: session.answers[currentQuestion.id] });
+        }
       }
 
       // Bazi sorularda cevaba gore kisa, sicak bir tepki metni gonderilir (orn.
@@ -737,6 +856,7 @@ async function handleIncoming(from, message) {
       // cevaplanınca session.name'i de dolduruyoruz (ozet/panel icin).
       if (currentQuestion.id === "ad_soyad" && !session.name) {
         session.name = session.answers.ad_soyad;
+        musteriProfilStore.profilGuncelle(from, { adSoyad: session.name });
       }
 
       session.questionIndex = nextValidIndex(flow, session.answers, session.questionIndex + 1);
@@ -959,9 +1079,46 @@ async function hatirlatmaGonder(numara, metin) {
   await sendText(numara, metin); // basarisiz olursa hata cagirana ULASIR (yukaridaki NOT'a bakin)
 }
 
+// Bir satis basariyla Garanti Emeklilik'e iletildikten birkac gun sonra
+// MUSTERIYE gonderilen kisa memnuniyet/kalite kontrolu mesaji (bkz.
+// server.js'deki memnuniyetAnketleriniKontrolEt, leadStore'daki
+// memnuniyetAnketiKur). 26.07.2026 eklendi.
+//
+// ONEMLI: MEMNUNIYET_ANKETI_TEMPLATE_NAME ayri, Meta'ya AYRICA onaylatilmasi
+// gereken YENI bir sablondur - AGENT_DETAY_TEMPLATE_NAME'i (ekip/danisman
+// bildirimleri icin onaylanmis) burada TEKRAR KULLANMIYORUZ, cunku o sablon
+// Meta'ya "isletme-ici bildirim" amaciyla onaylatilmis olabilir, MUSTERIYE
+// pazarlama/anket amacli bir mesaj icin ayni sablonu kullanmak Meta'nin
+// sablon kategorisi kurallarina aykiri olabilir. Bu ortam degiskeni Railway'e
+// TANIMLANMADAN bu ozellik musteriye ULASAMAZ (musteriyle son yazismadan
+// GUNLER sonra gonderildigi icin WhatsApp'in 24 saatlik ucretsiz musteri
+// penceresi neredeyse KESINLIKLE kapali olur - sablon olmadan duz metin
+// bu durumda basarisiz olur).
+async function memnuniyetAnketiGonder(numara, musteriAdi, urunAdi) {
+  const ilkAd = (musteriAdi || "").trim().split(/\s+/)[0] || "";
+  const metin =
+    `Merhaba ${ilkAd}! 😊 ${urunAdi} işleminizin üzerinden birkaç gün geçti, umarız her şey yolundadır.\n\n` +
+    `Bizimle olan deneyiminizi 1-5 arası bir puan ya da birkaç kelimeyle bizimle paylaşır mısınız? Geri bildiriminiz bizim için çok değerli. 🙏`;
+
+  const sablonAdi = process.env.MEMNUNIYET_ANKETI_TEMPLATE_NAME;
+  if (sablonAdi) {
+    try {
+      await sendTemplate(numara, sablonAdi, "tr", { detay: sablonParametresiIcinTemizle(metin) }, metin);
+      return;
+    } catch (err) {
+      console.error(
+        "Memnuniyet anketi şablonu gönderilemedi, düz metin deneniyor:",
+        err?.response?.data || err.message
+      );
+    }
+  }
+  await sendText(numara, metin); // basarisiz olursa hata cagirana ULASIR (bkz. hatirlatmaGonder'daki NOT)
+}
+
 module.exports = {
   handleIncoming,
   hatirlatmaGonder,
+  memnuniyetAnketiGonder,
   resolveText,
   resolveDanismanText,
   kompaktDetayOlustur,

@@ -3,7 +3,7 @@ const express = require("express");
 const bodyParser = require("body-parser");
 const path = require("path");
 const multer = require("multer");
-const { handleIncoming, hatirlatmaGonder, sablonParametresiIcinTemizle } = require("./conversationEngine");
+const { handleIncoming, hatirlatmaGonder, memnuniyetAnketiGonder, sablonParametresiIcinTemizle } = require("./conversationEngine");
 const advisorEngine = require("./advisorEngine");
 const { sendText, sendDocument, sendTemplate, sendAuthTemplate } = require("./loggedWhatsapp");
 const { sablonOlustur, sablonDetayGetir, sablonDuzenle } = require("./whatsapp");
@@ -15,6 +15,7 @@ const flows = require("./flows");
 const db = require("./db");
 const sessionStore = require("./sessionStore");
 const { getSession } = sessionStore;
+const musteriProfilStore = require("./musteriProfilStore");
 
 const app = express();
 // Railway (Render, Heroku vb. gibi) trafigi bir proxy/load balancer arkasindan
@@ -789,6 +790,29 @@ app.get("/api/panel/stats", panelAuth, (req, res) => {
   });
 });
 
+// Panele giren kisinin kim oldugunu (adi, kullanici adi) dondurur - panel.html
+// bunu kullanarak SADECE Enbel'e ozel gorunumleri (bkz. asagidaki ekip-ozeti)
+// gosterip gostermeyecegine karar verir. Sifre/telefon gibi hassas alanlar
+// asla donulmez.
+app.get("/api/panel/ben", panelAuth, (req, res) => {
+  res.json({ ad: req.panelKullanici.ad, kullaniciAdi: req.panelKullanici.kullaniciAdi });
+});
+
+// --- Genel ekip performans ozeti ---
+// 26.07.2026 eklendi: Enbel'in talebi uzerine, TUM ekibin (danisman bazinda)
+// performansini tek bir yerde goren bir ozet. Bahadır zaten WhatsApp'tan
+// "Performansım" menusuyle SADECE KENDI istatistiklerini gorebiliyordu -
+// buradaki genel ekip gorunumu ise bilinçli olarak SADECE Enbel'e acik
+// (panelKullanici.kullaniciAdi === "enbeleksi"), cunku bu ekip-genelinde
+// karsilastirmali bir yonetim gorunumu, danismanlarin birbirini gormesi
+// icin tasarlanmadi.
+app.get("/api/panel/ekip-ozeti", panelAuth, (req, res) => {
+  if (req.panelKullanici.kullaniciAdi !== "enbeleksi") {
+    return res.status(403).json({ error: "Bu görünüme erişim yetkiniz yok." });
+  }
+  res.json({ ekip: leadStore.ekipOzeti() });
+});
+
 // 1) Meta webhook DOGRULAMA (GET) - Meta App panelinde webhook'u kaydederken cagirilir
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
@@ -989,6 +1013,178 @@ async function hatirlatmalariKontrolEt() {
   }
 }
 
+// --- Memnuniyet/kalite kontrolu anketi zamanlayicisi ---
+// Her dakika, zamani gelmis (ve henuz gonderilmemis) memnuniyet anketlerini
+// kontrol edip ilgili musteriye WhatsApp mesaji olarak gonderir. Hatirlatma
+// zamanlayicisindan (yukarida) farkli olarak burada bir "deneme sayaci/pes
+// etme" mekanizmasi YOK - bu anket kritik bir is takibi degil (nice-to-have),
+// basarisiz olursa sadece loglanir ve BIR SONRAKI dakika TEKRAR denenir. Bu
+// bilinçli bir tercih: sonsuza kadar denenmesi (hatirlatmadaki gibi bir esik
+// olmadan) hicbir zarara yol acmaz, cunku memnuniyetAnketiGonder() sablon
+// ayarliysa (bkz. MEMNUNIYET_ANKETI_TEMPLATE_NAME) zaten neredeyse her zaman
+// ilk denemede basarili olur; sablon HENUZ ayarlanmamissa (Meta onayi
+// beklenirken) da sessizce "gonderilemedi" loglanip bir sonraki dakika tekrar
+// denenmesi, o gunku musteriler icin anketin TAMAMEN kaybolmasindan iyidir.
+async function memnuniyetAnketleriniKontrolEt() {
+  const zamaniGelenler = leadStore.zamaniGelenMemnuniyetAnketleri();
+  for (const lead of zamaniGelenler) {
+    if (!lead.telefon) {
+      leadStore.memnuniyetAnketiGonderildiIsaretle(lead.id);
+      continue;
+    }
+    try {
+      await memnuniyetAnketiGonder(lead.telefon, lead.musteriAdi, lead.urun);
+      console.log("Memnuniyet anketi gonderildi:", lead.id, lead.telefon);
+      leadStore.memnuniyetAnketiGonderildiIsaretle(lead.id);
+    } catch (err) {
+      console.error(
+        `Memnuniyet anketi gonderilemedi (lead ${lead.id}, ${lead.telefon}) - bir dakika sonra tekrar denenecek:`,
+        err?.response?.data || err.message
+      );
+    }
+  }
+}
+
+// --- Poliçe yenileme -> otomatik "Bekleyen İş" donusumu ---
+// 26.07.2026 eklendi (Enbel'in "yenilemesine 15 gün kala tüm poliçeleri
+// bekleyen iş listesine alalım" talebi uzerine). Eskiden yenilemeStore
+// SADECE danismanin WhatsApp'tan "Yaklaşan Yenilemeler" menusune kendisi
+// girip BAKMASIYLA (pull) isliyordu. Artik her dakika, bitis tarihine
+// YENILEME_BEKLEYEN_IS_ESIK_GUN gun (varsayilan 15) ya da daha az kalmis VE
+// HENUZ donusturulmemis kayitlar icin leadStore'da OTOMATIK bir "Bekleyen
+// İş" (Açık talep) olusturuluyor - boylece panelde ve asagidaki gunluk
+// ozet mesajinda (gunlukBekleyenIsOzetiKontrolEt) diger butun bekleyen
+// islerle AYNI sekilde goruntulenip takip edilebiliyor, kapanana kadar her
+// gun hatirlatiliyor.
+const YENILEME_BEKLEYEN_IS_ESIK_GUN = 15;
+
+async function yenilemeleriBekleyenIseAktar() {
+  const zamaniGelenler = yenilemeStore.zamaniGelenYenilemeler(YENILEME_BEKLEYEN_IS_ESIK_GUN);
+  for (const kayit of zamaniGelenler) {
+    const gecikmisMi = kayit.bitisTarihi < Date.now();
+    const tarihMetni = new Date(kayit.bitisTarihi).toLocaleDateString("tr-TR", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric"
+    });
+    leadStore.gecmisLeadEkle({
+      telefon: null,
+      musteriAdi: kayit.musteriAdi,
+      urun: kayit.urun,
+      danismanAdi: kayit.danismanAdi,
+      danismanNumarasi: kayit.danismanNumarasi,
+      ozet:
+        `[Otomatik - Yenileme Zamanı Geldi] ${kayit.urun}` +
+        (kayit.plaka ? ` • Plaka: ${kayit.plaka}` : "") +
+        ` • Bitiş Tarihi: ${tarihMetni}${gecikmisMi ? " (süresi geçmiş görünüyor)" : ""}`,
+      durum: "Açık",
+      olusturulmaZamani: Date.now(),
+      netPrim: null,
+      disKaynakId: `YENILEME:${kayit.id}`
+    });
+    yenilemeStore.yenilemeBekleyenIseAktarildiIsaretle(kayit.id);
+    console.log("Yenileme bekleyen ise donusturuldu:", kayit.id, kayit.musteriAdi, kayit.urun);
+  }
+}
+
+// --- Gunluk "Bekleyen İşler" ozeti (her sabah 09:30, Turkiye saatiyle) ---
+// 26.07.2026 eklendi. Her danismana KENDI acik (Açık durumundaki) talep/
+// bekleyen isleri, ayrica Bahadır'a TUM elementer (Trafik/Kasko/DASK/Konut/
+// İşyeri/Yeşil Kart) acik islerin toplu ozetini, Enbel'e ise TUM acik
+// islerin ("tüm üretimler") toplu ozetini gonderir. Bir is Olumlu ya da
+// Olumsuz olarak KAPATILMADAN once listeden dusmez - yani ayni is, kapanana
+// kadar HER GUN tekrar hatirlatilir (bu yuzden burada bir "gonderildi"
+// isaretlemesi YOK, sadece "bugun zaten gonderildi mi" kontrolu var, asagiya
+// bakin).
+//
+// Saat kontrolu Turkiye saatine (UTC+3, 2016'dan beri yaz saati uygulamasi
+// yok) gore yapilir - Railway sunuculari genelde UTC calistigi icin
+// dogrudan sunucu saatine guvenilemez (bkz. paneldeki turkiyeYerelSaatinden
+// UtcMsHesapla'daki ayni sebep).
+function simdiTurkiyeSaatineGore() {
+  const turkiyeMs = Date.now() + TURKIYE_UTC_FARKI_MS;
+  const d = new Date(turkiyeMs);
+  return {
+    saat: d.getUTCHours(),
+    dakika: d.getUTCMinutes(),
+    gunAnahtari: `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`
+  };
+}
+
+// Bir talebin urunu "elementer" bir brans mi (Trafik/Kasko/DASK/Konut/
+// İşyeri/Yeşil Kart - yani saglik/hayat/BES/hekim sorumluluk DISINDAKI
+// klasik elementer branslar) diye bakar. Hem botun kendi flows.js
+// etiketlerinde ("DASK", "Trafik Sigortası" gibi) HEM DE Excel'den aktarilan
+// daha dagimik etiketlerde ("TRAFİK ZEYİL", "KASKO ZEYİL" gibi) calismasi
+// icin anahtar-kelime tabanli, esnek bir eslestirme kullanir.
+const ELEMENTER_ANAHTAR_KELIMELER = ["trafik", "kasko", "dask", "konut", "işyeri", "isyeri", "yeşil kart", "yesil kart"];
+function urunElementerMi(urun) {
+  if (!urun) return false;
+  const normalized = String(urun).toLocaleLowerCase("tr-TR");
+  return ELEMENTER_ANAHTAR_KELIMELER.some((k) => normalized.includes(k));
+}
+
+function acikIsSatiriOlustur(lead) {
+  const gunSayisi = Math.max(0, Math.floor((Date.now() - lead.olusturulmaZamani) / (24 * 60 * 60 * 1000)));
+  return `• ${lead.musteriAdi || lead.telefon} - ${lead.urun}${lead.danismanAdi ? ` (${lead.danismanAdi})` : ""} - ${gunSayisi} gündür açık`;
+}
+
+let gunlukOzetGonderilenGun = null; // "YYYY-MM-DD" - ayni gun icinde tekrar gonderilmesin diye
+
+async function gunlukBekleyenIsOzetiKontrolEt() {
+  const { saat, dakika, gunAnahtari } = simdiTurkiyeSaatineGore();
+  if (saat !== 9 || dakika !== 30) return;
+  if (gunlukOzetGonderilenGun === gunAnahtari) return;
+  gunlukOzetGonderilenGun = gunAnahtari; // ilk once isaretle - gonderim sirasinda bir hata olsa bile ayni dakika icinde tekrar tekrar denenmesin
+
+  const acikLeadler = leadStore.tumLeadleriGetir().filter((l) => l.durum === "Açık");
+  if (acikLeadler.length === 0) return;
+
+  // 1) Her danismana KENDI acik isleri (sadece numarasi bilinenler icin mumkun).
+  const danismanGruplari = new Map(); // numara -> lead[]
+  acikLeadler.forEach((l) => {
+    if (!l.danismanNumarasi) return;
+    if (!danismanGruplari.has(l.danismanNumarasi)) danismanGruplari.set(l.danismanNumarasi, []);
+    danismanGruplari.get(l.danismanNumarasi).push(l);
+  });
+
+  for (const [numara, leadler] of danismanGruplari) {
+    const mesaj = `☀️ Günaydın! Bugün bekleyen işleriniz:\n\n${leadler.map(acikIsSatiriOlustur).join("\n")}`;
+    try {
+      await hatirlatmaGonder(numara, mesaj);
+      console.log(`Gunluk bekleyen is ozeti gonderildi: ${numara} (${leadler.length} is)`);
+    } catch (err) {
+      console.error(`Gunluk bekleyen is ozeti gonderilemedi (${numara}):`, err?.response?.data || err.message);
+    }
+  }
+
+  // 2) Bahadır'a TUM elementer branslardaki acik isler (kim tarafindan
+  //    acilmis/atanmis olursa olsun).
+  const bahadir = PANEL_KULLANICILARI.find((k) => k.kullaniciAdi === "bahadireksi");
+  const elementerAcikIsler = acikLeadler.filter((l) => urunElementerMi(l.urun));
+  if (bahadir && elementerAcikIsler.length > 0) {
+    const mesaj = `☀️ Günaydın! Bugün TÜM EKİBİN elementer bekleyen işleri:\n\n${elementerAcikIsler.map(acikIsSatiriOlustur).join("\n")}`;
+    try {
+      await hatirlatmaGonder(bahadir.telefon, mesaj);
+      console.log(`Gunluk elementer ozeti Bahadır'a gonderildi (${elementerAcikIsler.length} is)`);
+    } catch (err) {
+      console.error("Gunluk elementer ozeti gonderilemedi (Bahadır):", err?.response?.data || err.message);
+    }
+  }
+
+  // 3) Enbel'e TUM acik isler ("tüm üretimler" - hangi brans/danisman olursa olsun).
+  const enbel = PANEL_KULLANICILARI.find((k) => k.kullaniciAdi === "enbeleksi");
+  if (enbel) {
+    const mesaj = `☀️ Günaydın! Bugün TÜM EKİBİN bekleyen işleri:\n\n${acikLeadler.map(acikIsSatiriOlustur).join("\n")}`;
+    try {
+      await hatirlatmaGonder(enbel.telefon, mesaj);
+      console.log(`Gunluk genel ozet Enbel'e gonderildi (${acikLeadler.length} is)`);
+    } catch (err) {
+      console.error("Gunluk genel ozet gonderilemedi (Enbel):", err?.response?.data || err.message);
+    }
+  }
+}
+
 // --- Kalici depolama: acilista yukleme, calisirken periyodik yedekleme ---
 // DATABASE_URL tanimliysa (Railway'de PostgreSQL eklenmisse), tum oturumlar,
 // mesaj gecmisi ve talepler her 15 saniyede bir ve kapanmadan hemen once
@@ -1003,7 +1199,8 @@ async function tumVeriyiKaydet() {
     messageLog.kaydet().catch((err) => console.error("Mesaj gecmisi kaydedilemedi:", err.message)),
     dokumanStore.kaydet().catch((err) => console.error("Dokumanlar kaydedilemedi:", err.message)),
     yenilemeStore.kaydet().catch((err) => console.error("Yenilemeler kaydedilemedi:", err.message)),
-    islenenMesajIdleriKaydet().catch((err) => console.error("İşlenen mesaj ID'leri kaydedilemedi:", err.message))
+    islenenMesajIdleriKaydet().catch((err) => console.error("İşlenen mesaj ID'leri kaydedilemedi:", err.message)),
+    musteriProfilStore.kaydet().catch((err) => console.error("Müşteri profilleri kaydedilemedi:", err.message))
   ]);
 }
 
@@ -1043,6 +1240,7 @@ async function baslat() {
   await guvenliYukle("Dokumanlar", dokumanStore.yukle);
   await guvenliYukle("Yenilemeler", yenilemeStore.yukle);
   await guvenliYukle("Islenmis mesaj ID'leri", islenenMesajIdleriYukle);
+  await guvenliYukle("Musteri profilleri", musteriProfilStore.yukle);
 
   app.listen(PORT, () => {
     console.log(`Sunucu ${PORT} portunda calisiyor.`);
@@ -1054,6 +1252,18 @@ async function baslat() {
 
   setInterval(() => {
     hatirlatmalariKontrolEt().catch((err) => console.error("Hatirlatma kontrolu hatasi:", err));
+  }, HATIRLATMA_KONTROL_SIKLIGI_MS);
+
+  setInterval(() => {
+    memnuniyetAnketleriniKontrolEt().catch((err) => console.error("Memnuniyet anketi kontrolu hatasi:", err));
+  }, HATIRLATMA_KONTROL_SIKLIGI_MS);
+
+  setInterval(() => {
+    yenilemeleriBekleyenIseAktar().catch((err) => console.error("Yenileme -> bekleyen is donusumu hatasi:", err));
+  }, HATIRLATMA_KONTROL_SIKLIGI_MS);
+
+  setInterval(() => {
+    gunlukBekleyenIsOzetiKontrolEt().catch((err) => console.error("Gunluk bekleyen is ozeti hatasi:", err));
   }, HATIRLATMA_KONTROL_SIKLIGI_MS);
 
   // Suresi gecmis 2FA deneme/oturum kayitlarini temizle (bellek sismesin diye).
