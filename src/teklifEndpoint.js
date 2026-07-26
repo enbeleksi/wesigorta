@@ -47,15 +47,21 @@
 //     try/catch tarafından yakalanmıyor, konsola bile düşmüyordu. Artık
 //     yanitiKontrolEt ile response.ok kontrol ediliyor ve hata varsa
 //     düzgün bir Error fırlatılıyor.
-//   - EKİP BİLDİRİMİ ARTIK ŞABLON-YEDEKLİ: TEKLIF_EKIP_TEMPLATE_NAME
-//     tanımlıysa, ekibe (NOTIFY_NUMBER + danışman) giden bildirim önce bu
-//     şablonla denenir (24 saatlik pencereye tabi değildir, ekip üyesi bot'a
-//     hiç yazmamış olsa bile ulaşır); başarısız olursa/ayarlanmamışsa düz
-//     metne düşer. Şablonun BODY'sinde {{musteri_adi}} ve {{telefon}}
-//     adlarında iki değişken olmalı. Bu ŞABLON HEM "yeni web teklifi" HEM
-//     "web teklif müşterisi yazdı" bildirimleri için ORTAK kullanılıyor (iki
-//     ayrı şablon onaylatma zahmetinden kaçınmak için) - o yüzden metni
-//     kasıtlı olarak GENEL tutun (bkz. .env.example'daki örnek).
+//   - EKİP BİLDİRİMİ ARTIK ŞABLON-YEDEKLİ, TEK-DEĞİŞKENLİ (Enbel'in acik
+//     talebi uzerine ayni gun GUNCELLENDI - "24 saat olayi ne olursa olsun
+//     mesaj gitsin"): TEKLIF_EKIP_TEMPLATE_NAME tanımlıysa, ekibe
+//     (NOTIFY_NUMBER + danışman) giden bildirim ÖNCE bu şablonla denenir -
+//     conversationEngine.js'teki AGENT_DETAY_TEMPLATE_NAME ile AYNI, halihazirda
+//     kanitlanmis desen: TÜM zengin/detaylı metin TEK bir {{detay}}
+//     değişkenine gidiyor, bu yüzden şablon 24 saatlik pencere durumundan
+//     TAMAMEN BAĞIMSIZ olarak TAM bilgiyi iletebiliyor. Başarısız olursa/
+//     ayarlanmamışsa düz metne düşer (SADECE pencere açıksa çalışır - bu
+//     yüzden şablonu onaylatıp tanımlamanız ŞART). Bu ŞABLON HEM "yeni web
+//     teklifi" HEM "web teklif müşterisi yazdı" bildirimleri için ORTAK
+//     kullanılıyor. NOT: şablon parametreleri satır sonu içeremediğinden
+//     (Meta 132018 hatası), şablonla giden versiyon çok satırlı değil,
+//     " • " ile ayrılmış tek satır olarak görünür (bkz. aşağıda
+//     sablonIcinTemizle) - bu WhatsApp'ın kendi teknik kısıtlaması.
 // =====================================================================
 
 module.exports = function (app, pool) {
@@ -174,30 +180,58 @@ module.exports = function (app, pool) {
     return yanitiKontrolEt(response);
   }
 
+  // WhatsApp sablon PARAMETRE DEGERLERI (sablonun kendi sabit metni degil)
+  // satir sonu (\n) ICEREMEZ ve 4'ten fazla ardisik bosluk barindiramaz -
+  // Meta bunu 132018 hatasiyla reddediyor. conversationEngine.js'teki
+  // sablonParametresiIcinTemizle ile AYNI, kanitlanmis cozum: satir
+  // sonlarini " • " ile degistiriyoruz. Duz metin (mesajGonder) gonderiminde
+  // BU DONUSUM UYGULANMAZ - orijinal, satir sonlu hali oldugu gibi gider.
+  function sablonIcinTemizle(metin) {
+    return String(metin || '')
+      .replace(/\r\n|\r|\n/g, ' • ')
+      .replace(/\t/g, ' ')
+      .replace(/ {5,}/g, '    ')
+      .replace(/(\s*•\s*){2,}/g, ' • ')
+      .replace(/^\s*•\s*|\s*•\s*$/g, '')
+      .trim();
+  }
+
   // Ekibe (NOTIFY_NUMBER + varsa danışman) giden bildirimleri TEK bir yerden
-  // yönetir - iki hem /api/teklif hem musteriYazdiBildir tarafından
-  // kullanılır (25.07.2026 eklemesi). conversationEngine.js'teki
-  // bildirimGonder ile AYNI desen: önce (varsa) TEKLIF_EKIP_TEMPLATE_NAME
-  // şablonunu dener - şablon mesajları 24 saatlik müşteri-hizmeti
-  // penceresine TABİ DEĞİLDİR, karşı taraf (ekip üyesi) bu numaraya hiç
-  // yazmamış olsa bile ulaşır. Şablon başarılı olursa BURADA DURULUR (aynı
-  // bilgiyi iki kez göndermemek için). Şablon başarısız olursa/ayarlanmamışsa
-  // düz metne düşer - bu SADECE pencere açıksa (ekip üyesi son 24 saatte
-  // bot'a yazdıysa) çalışır. Her iki adım da başarısız olursa hata konsola
-  // düşer (bkz. yukarıda yanitiKontrolEt - artık HTTP hataları sessizce
-  // kaybolmuyor).
-  async function ekibeBildirGonder(numara, duzMetin, sablonParametreler) {
+  // yönetir - hem /api/teklif hem musteriYazdiBildir tarafından kullanılır.
+  //
+  // 25.07.2026 eklemesi, 25.07.2026 GÜNCELLEMESİ (Enbel'in acik talebi -
+  // "24 saat olayini sikitriet, mesaj HER DURUMDA gitsin"): artik TEK
+  // degiskenli ({{detay}}), conversationEngine.js'teki AGENT_DETAY_TEMPLATE_NAME
+  // ile AYNI, KANITLANMIS deseni kullaniyoruz - zengin/detayli metnin
+  // TAMAMI tek bir sablon degiskenine gidiyor, boylece sablon HER SEFERINDE
+  // (24 saatlik pencere durumundan BAGIMSIZ) TAM bilgiyi iletebiliyor. Sablon
+  // basarili olursa BURADA DURULUR (ayni bilgiyi iki kez, hem sablon hem duz
+  // metin olarak gondermemek icin). Sablon basarisiz olursa/ayarlanmamissa
+  // (TEKLIF_EKIP_TEMPLATE_NAME bos ise) duz metne duser - bu durumda mesaj
+  // SADECE pencere acik olursa ulasir (bu yuzden sablonu ONAYLATIP
+  // TANIMLAMANIZ SART - aksi halde "her durumda ulassin" garantisi calismaz).
+  //
+  // NOT (bicim farki): sablon PARAMETRESİ satir sonu iceremedigi icin
+  // (yukarida sablonIcinTemizle), sablonla giden versiyon multi-line degil,
+  // " • " ile ayrilmis TEK SATIR olarak gorunur (orn. "🔔 *Yeni Web
+  // Teklifi!* • 👤 Ad: Haluk Levent • 📱 Tel: ..."). Bu, WhatsApp'in kendi
+  // teknik kisitlamasi - bu sablon disinda bir cozum yok. Pencere acikken
+  // giden duz metin versiyonu ise SIZIN VERDIGINIZ orijinal, satir sonlu
+  // formatta kalir - fakat sablon basarili oldugunda o zaten gonderilmiyor
+  // (tekrari onlemek icin), yani gunluk kullanimda EN SIK GORECEGINIZ format
+  // sablonun tek-satirlik hali olacak.
+  async function ekibeBildirGonder(numara, zenginMetin) {
     const sablonAdi = process.env.TEKLIF_EKIP_TEMPLATE_NAME;
     if (sablonAdi) {
       try {
-        await sablonGonder(numara, sablonAdi, sablonParametreler);
-        return; // basarili - sablon zaten yeterli bilgiyi iletti
+        await sablonGonder(numara, sablonAdi, { detay: sablonIcinTemizle(zenginMetin) });
+        return; // basarili - sablon zaten TUM detayi (mesaj) iletti
       } catch (e) {
         console.error('Ekip şablon bildirimi gönderilemedi (' + numara + '):', e.message);
       }
     }
     try {
-      await mesajGonder(numara, duzMetin);
+      await mesajGonder(numara, zenginMetin);
     } catch (e) {
       console.error('Teklif bildirimi gönderilemedi (' + numara + '):', e.message);
     }
@@ -254,18 +288,21 @@ module.exports = function (app, pool) {
       );
 
       // --- 2) WhatsApp bildirimi (ekibe) ---
+      // 25.07.2026: format Enbel'in verdigi ornege gore birebir yeniden
+      // duzenlendi (etiketli alanlar, "Aylik Gelir" satiri eklendi, "$" yerine
+      // "USD", "≈" yerine "~", "Yillik vergi avantaji" satiri kaldirildi).
       const mesaj =
         '🔔 *Yeni Web Teklifi!*\n\n' +
-        '👤 ' + b.ad + '\n' +
-        '📱 ' + b.telefon + '\n' +
-        '🏷️ ' + (b.kisiTipi || '-') + '\n' +
-        '💵 Prim: ' + (b.primUsd || '-') + ' $ / ' + (b.odemeDonemi || 'aylık') +
+        '👤 Ad: ' + b.ad + '\n' +
+        '📱 Tel: ' + b.telefon + '\n' +
+        '🏷️ Tip: ' + (b.kisiTipi || '-') + '\n' +
+        (b.gelirAylikTL ? '💰 Aylık Gelir: ' + Number(b.gelirAylikTL).toLocaleString('tr-TR') + ' TL\n' : '') +
+        '💵 Prim: ' + (b.primUsd || '-') + ' USD / ' + (b.odemeDonemi || 'aylık') +
         ' (' + (b.paket || '-') + ' Paket)\n' +
-        (b.teminatUsd ? '🛡️ Teminat: ≈ ' + Number(b.teminatUsd).toLocaleString('tr-TR') + ' $' +
+        (b.teminatUsd ? '🛡️ Teminat: ~' + Number(b.teminatUsd).toLocaleString('tr-TR') + ' USD' +
           (b.yas ? ' (' + b.yas + ' yaş, ' + (b.cinsiyet || '') + ')' : '') + '\n' : '') +
-        '📈 Yıllık vergi avantajı: ' + Number(b.yillikTasarrufTL || 0).toLocaleString('tr-TR') + ' ₺\n' +
         (b.danisman ? '🤝 Danışman: ' + b.danisman + '\n' : '') +
-        '\nMüşteri PDF teklifini indirdi — sıcakken arayın! 🔥';
+        '\nMüşteri PDF teklifini indirdi, sıcakken arayın! 🔥';
 
       const alicilar = new Set();
       if (process.env.NOTIFY_NUMBER) alicilar.add(process.env.NOTIFY_NUMBER.trim());
@@ -274,7 +311,7 @@ module.exports = function (app, pool) {
         if (numara) alicilar.add(numara);
       }
       for (const numara of alicilar) {
-        await ekibeBildirGonder(numara, mesaj, { musteri_adi: b.ad, telefon: b.telefon });
+        await ekibeBildirGonder(numara, mesaj);
       }
 
       // --- 3) Müşteriye onaylı şablonla bilgilendirme ---
@@ -390,7 +427,7 @@ module.exports = function (app, pool) {
 
     const bildirimMetni = `🔔 Web teklif müşterisi yazdı: ${kayit.ad} ${kayit.telefon} — aranmak istiyor`;
     for (const numara of alicilar) {
-      await ekibeBildirGonder(numara, bildirimMetni, { musteri_adi: kayit.ad, telefon: kayit.telefon });
+      await ekibeBildirGonder(numara, bildirimMetni);
     }
 
     const musteriNumarasi = telefonUluslararasiFormata(telefonHam);
