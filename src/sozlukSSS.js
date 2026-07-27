@@ -162,4 +162,15 @@ function sssCevabiBul(userText) {
   return eslesen ? eslesen.cevap : null;
 }
 
-module.exports = { sssCevabiBul };
+// 27.07.2026 eklendi: danışman menüsündeki "SSS" seçeneği için - müşteri
+// konuşmasındaki soru-kalıplı otomatik tetiklemeden (sssCevabiBul) BAĞIMSIZ
+// olarak, TÜM terim ve ürün açıklamalarını, danışmana doğrudan gösterilecek
+// iki ayrı okunaklı mesaj halinde döner (WhatsApp tek mesajda çok uzun metni
+// kesebildiği için ikiye bölünmüş halde).
+function tumSssIcerigiMesajlari() {
+  const terimlerMetni = "📚 *Sık Sorulan Kavramlar*\n\n" + TERIMLER.map((t) => t.cevap).join("\n\n");
+  const urunlerMetni = "📦 *Ürün Açıklamaları*\n\n" + URUN_ACIKLAMALARI.map((u) => u.cevap).join("\n\n");
+  return [terimlerMetni, urunlerMetni];
+}
+
+module.exports = { sssCevabiBul, tumSssIcerigiMesajlari };

@@ -7,6 +7,27 @@ const leadStore = require("./leadStore");
 const musteriProfilStore = require("./musteriProfilStore");
 const sozlukSSS = require("./sozlukSSS");
 const flows = require("./flows");
+const { adSoyadGecerliMi } = require("./validators");
+const { gunSelamlamasi } = require("./gunSelamlama");
+
+// Enbel/Bahadır'in numaralari birden fazla yerde (guvenlik agi, not bildirimi,
+// yeni elementer talep sonrasi aksiyon sorma) kullanildigi icin TEK YERDEN
+// tanimlaniyor.
+const ENBEL_NUMARASI = "905326876126";
+const BAHADIR_NUMARASI = "905380711711";
+
+// 27.07.2026 eklendi: yeni bir elementer talep bildiriminin hemen ardindan
+// "Ne yapmak istersiniz?" sorusunu gostermek icin advisorEngine.js'deki
+// danisman-oturum mantigina ihtiyac var, ama advisorEngine.js zaten BU
+// dosyayi (conversationEngine.js) import ettigi icin tersi yonde bir
+// require dongusel bagimliliga (ve eksik/undefined export'lara) yol acardi.
+// Bunun yerine server.js (ikisini de import eden ust seviye), baslangicta
+// yeniTalepAksiyonHookAyarla(...) ile advisorEngine.js'deki fonksiyonu
+// buraya "enjekte" ediyor - bkz. finishFlow icindeki kullanim ve server.js.
+let yeniTalepAksiyonHook = null;
+function yeniTalepAksiyonHookAyarla(fn) {
+  yeniTalepAksiyonHook = fn;
+}
 
 const PRODUCT_KEYS = Object.keys(flows);
 // Urun secim listesinde WhatsApp'in 24 karakter siniri oldugu icin, uzun urun
@@ -209,12 +230,12 @@ async function baslaYeniKonusma(from, session, userText, oncekiIsim) {
     session.isimTeyitBekleniyor = true;
     await sendText(
       from,
-      `Merhaba ${ilkAd}! 😊 Yeni bir sigorta teklif talebiniz için bizi tekrar tercih ettiğiniz için teşekkür ederiz. Size nasıl yardımcı olabiliriz?`
+      `${gunSelamlamasi()} ${ilkAd}! 😊 Yeni bir sigorta teklif talebiniz için bizi tekrar tercih ettiğiniz için teşekkür ederiz. Size nasıl yardımcı olabiliriz?`
     );
   } else {
     await sendText(
       from,
-      "Merhaba! 😊 WE Sigorta ailesine hoş geldiniz! Sizinle tanışmak ve size en uygun teklifi hazırlamak için sabırsızlanıyoruz. 🎉"
+      `${gunSelamlamasi()}! 😊 WE Sigorta ailesine hoş geldiniz! Sizinle tanışmak ve size en uygun teklifi hazırlamak için sabırsızlanıyoruz. 🎉`
     );
   }
 
@@ -700,7 +721,12 @@ async function handleIncoming(from, message) {
     session.state !== "KVKK_CONSENT";
 
   if (isReturningAfterGap) {
-    await sendText(from, "Tekrar merhaba! 😊 Kaldığımız yerden devam edelim.");
+    // NOT: buradaki kucuk harfe cevirmede JS'in locale-farkinda OLMAYAN
+    // .toLowerCase()'i KULLANILMAZ - "İyi geceler".toLowerCase() Turkce
+    // kurallarina gore "iyi" degil, hatali "i̇yi" (fazladan noktali bilesik
+    // karakter) uretir. .toLocaleLowerCase("tr") Turkce İ/I harflerini doğru
+    // sekilde kucuk i/ı'ya cevirir.
+    await sendText(from, `Tekrar ${gunSelamlamasi().toLocaleLowerCase("tr")}! 😊 Kaldığımız yerden devam edelim.`);
   }
 
   switch (session.state) {
@@ -737,7 +763,22 @@ async function handleIncoming(from, message) {
     }
 
     case "ASK_NAME": {
-      session.name = isimCevabiniTemizle(userText);
+      const temizlenmisIsim = isimCevabiniTemizle(userText);
+      // 27.07.2026 eklendi: bu asamada gelen metin dogrudan isim olarak
+      // kaydediliyordu - eskiden/farkli bir akistan kalan, ASK_NAME'de takili
+      // kalmis bir oturuma "Merhaba" gibi bir selamlama gelirse bu kelime
+      // aynen isim gibi kaydediliyordu ("Teşekkürler Merhaba!"). adSoyadGecerliMi
+      // en az iki kelimeden olusan makul bir isim-soyisim bekliyor - tek
+      // kelimelik selamlama/dolgu kelimeleri bu kontrolden gecemez, soru tekrar
+      // sorulur.
+      if (!adSoyadGecerliMi(temizlenmisIsim)) {
+        await sendText(
+          from,
+          "Hmm, bunu bir isim-soyisim olarak anlayamadım 🙂 Lütfen adınızı ve soyadınızı yazar mısınız? (örn: Ahmet Yılmaz)"
+        );
+        break;
+      }
+      session.name = temizlenmisIsim;
       // Ismi kalici profile de kaydediyoruz - boylece bu musteri gunler/haftalar
       // sonra tekrar yazdiginda (oturum tamamen sifirlanmis olsa bile) ismiyle
       // karsilanir ve isim tekrar sorulmaz.
@@ -921,8 +962,6 @@ async function askCurrentQuestion(from, session) {
 // - Bahadır: sadece elementer brans urunlerinde (flow.agentNumber onun
 //   numarasiysa) - yani DASK, Konut, Trafik, Kasko, Ozel Saglik, TSS, Malpraktis.
 function guvenlikAgiNumaralari(flow, birincilNumara) {
-  const ENBEL_NUMARASI = "905326876126";
-  const BAHADIR_NUMARASI = "905380711711";
   const numaralar = new Set();
   if (birincilNumara) numaralar.add(birincilNumara);
   numaralar.add(ENBEL_NUMARASI);
@@ -998,6 +1037,27 @@ async function finishFlow(from, session) {
     danismanNumarasi: agentNumber || null,
     ozet: kompaktDetay
   });
+
+  // 27.07.2026 eklendi: musteri ELEMENTER bir urun talebi olusturduysa (yani
+  // bu flow'un acentesi Bahadır ise - flows.js'deki mevcut "elementer branş"
+  // atamasiyla AYNI tanim), bildirim mesajinin hemen ardindan ilgili herkese
+  // (guvenlik agindaki AYNI numaralar) "Ne yapmak istersiniz?" diye sorup
+  // (Not Ekle/Durum Değiştir/Hatırlatma Kur butonlariyla) dogrudan aksiyon
+  // almalarini sagliyoruz - "Bekleyen İş" menusune gitmelerini beklemeden.
+  // Bu, advisorEngine.js'deki danisman-taraf oturum/menu mantigina bagli
+  // oldugu icin DOGRUDAN COZULEMEZ (conversationEngine.js -> advisorEngine.js
+  // dongusel bagimlilik olusturur) - bunun yerine server.js baslangicta
+  // yeniTalepAksiyonHookAyarla ile advisorEngine.js'deki fonksiyonu buraya
+  // enjekte ediyor (bkz. asagisi ve server.js'deki baslat()).
+  if (agentNumber === BAHADIR_NUMARASI && yeniTalepAksiyonHook) {
+    for (const numara of bildirilecekNumaralar) {
+      try {
+        await yeniTalepAksiyonHook(numara, yeniLead);
+      } catch (err) {
+        console.error(`Yeni elementer talep sonrasi aksiyon sorusu gonderilemedi (${numara}):`, err?.response?.data || err.message);
+      }
+    }
+  }
 
   // Musteriden coklu_foto tipi bir soruda fotograf toplandiysa (orn. kasko
   // arac fotograflari), bunlari da talebe belge olarak ekliyoruz.
@@ -1079,6 +1139,38 @@ async function hatirlatmaGonder(numara, metin) {
   await sendText(numara, metin); // basarisiz olursa hata cagirana ULASIR (yukaridaki NOT'a bakin)
 }
 
+// 27.07.2026 eklendi: gunluk bekleyen is ozeti gibi COK SATIRLI (birden fazla
+// gercek satir sonu icheren) mesajlar icin. hatirlatmaGonder'daki
+// AGENT_DETAY_TEMPLATE_NAME sablonu "YENI TALEP" bildirimleri icin Meta'ya
+// onaylatilmis - sabit bir "Yeni bir talep geldi!" basligi tasiyor VE (yukaridaki
+// sablonParametresiIcinTemizle fonksiyonundaki NOT'ta aciklandigi gibi) WhatsApp
+// kurallari geregi sablon PARAMETRELERI gercek \n icheremiyor (Meta hata 132018
+// ile reddediyor) - bu yuzden bu sablonla gonderilen COK SATIRLI bir liste hem
+// yanlis/alakasiz bir baslikla hem de TUM satirlari " • " ile yapistirilip satir
+// sonlari kaybolmus halde cikiyordu (27.07.2026, kullanicinin WhatsApp ekran
+// goruntusuyle bildirdigi hata).
+//
+// Bu fonksiyon ONCE DUZ METIN dener (baslik YOK, satir sonlari TAM istendigi
+// gibi kalir) - ama duz metin (session mesaji) SADECE WhatsApp'in 24 saatlik
+// "musteri penceresi" acikken calisir (alici son 24 saat icinde bota bir seyler
+// yazmissa). Ekip zaten gun icinde bota WhatsApp'tan menu uzerinden sik sik
+// yazdigi icin bu neredeyse her zaman acik olur. Pencere KAPALIYSA (bir kisi
+// uzun suredir bota hic yazmamissa), duz metin basarisiz olur - bu durumda
+// mesaj TAMAMEN kaybolmasin diye (cirkin ama guvenilir) hatirlatmaGonder'a
+// (sablonlu) dusuluyor. Yani: pencere acikken mukemmel gorunur, kapaliyken
+// eski (sablonlu, " • " ayrimli) haliyle olsa da YINE DE ulasir.
+async function cokSatirliMesajGonder(numara, metin) {
+  try {
+    await sendText(numara, metin);
+  } catch (err) {
+    console.error(
+      "Çok satırlı mesaj düz metin olarak gönderilemedi (24 saatlik pencere kapalı olabilir), şablonlu hatırlatmaya düşülüyor:",
+      err?.response?.data || err.message
+    );
+    await hatirlatmaGonder(numara, metin);
+  }
+}
+
 // Bir satis basariyla Garanti Emeklilik'e iletildikten birkac gun sonra
 // MUSTERIYE gonderilen kisa memnuniyet/kalite kontrolu mesaji (bkz.
 // server.js'deki memnuniyetAnketleriniKontrolEt, leadStore'daki
@@ -1115,10 +1207,54 @@ async function memnuniyetAnketiGonder(numara, musteriAdi, urunAdi) {
   await sendText(numara, metin); // basarisiz olursa hata cagirana ULASIR (bkz. hatirlatmaGonder'daki NOT)
 }
 
+// server.js'deki ELEMENTER_ANAHTAR_KELIMELER/urunElementerMi ile AYNI liste -
+// burada AYRICA tutuluyor cunku conversationEngine.js server.js'i (dongusel
+// bagimliligi onlemek icin) import edemiyor. Ikisi de degistirilirse birlikte
+// guncellenmeli.
+const ELEMENTER_ANAHTAR_KELIMELER = ["trafik", "kasko", "dask", "konut", "işyeri", "isyeri", "yeşil kart", "yesil kart"];
+function urunElementerMi(urun) {
+  if (!urun) return false;
+  const normalized = String(urun).toLocaleLowerCase("tr-TR");
+  return ELEMENTER_ANAHTAR_KELIMELER.some((k) => normalized.includes(k));
+}
+
+// 27.07.2026 eklendi: "herhangi biri herhangi bir bekleyen işe/talebe not
+// eklediğinde konuyla ilgili herkese bilgilendirme mesajı gitsin" (kullanicinin
+// talebi). guvenlikAgiNumaralari ile AYNI "kime gitmeli" mantigini kullanir
+// (danisman + her zaman Enbel + elementerse Bahadır), ama notu EKLEYEN KISI
+// bu listeden CIKARILIR (kendi ekledigi notu kendine tekrar bildirmenin anlami
+// yok). Panelden (Bahadır/Enbel) ya da WhatsApp'tan ("Bekleyen İş" -> "Not
+// Ekle") eklenen notlarin HER İKİSİ İÇİN de cagirilir - bkz. server.js'deki
+// panel not route'u ve advisorEngine.js'deki DANISMAN_NOT_BEKLE case'i.
+async function notEklendiBildirimiGonder(lead, notMetni, ekleyenAdi, ekleyenNumarasi) {
+  const numaralar = new Set();
+  if (lead.danismanNumarasi) numaralar.add(lead.danismanNumarasi);
+  numaralar.add(ENBEL_NUMARASI);
+  if (urunElementerMi(lead.urun)) numaralar.add(BAHADIR_NUMARASI);
+  if (ekleyenNumarasi) numaralar.delete(ekleyenNumarasi);
+
+  if (numaralar.size === 0) return;
+
+  const mesaj =
+    `📝 ${ekleyenAdi || "Bir yetkili"} tarafından ${lead.musteriAdi || lead.telefon} (${lead.urun}) için not eklendi:\n` +
+    `"${notMetni}"`;
+
+  for (const numara of numaralar) {
+    try {
+      await cokSatirliMesajGonder(numara, mesaj);
+    } catch (err) {
+      console.error(`Not eklendi bildirimi gonderilemedi (${numara}):`, err?.response?.data || err.message);
+    }
+  }
+}
+
 module.exports = {
   handleIncoming,
   hatirlatmaGonder,
+  cokSatirliMesajGonder,
   memnuniyetAnketiGonder,
+  notEklendiBildirimiGonder,
+  yeniTalepAksiyonHookAyarla,
   resolveText,
   resolveDanismanText,
   kompaktDetayOlustur,

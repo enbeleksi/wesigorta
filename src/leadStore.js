@@ -21,7 +21,7 @@ let sayac = 0;
 
 const DURUMLAR = ["Açık", "Olumlu Kapandı", "Olumsuz Kapandı"];
 
-function yeniLeadOlustur({ telefon, musteriAdi, urun, danismanAdi, danismanNumarasi, ozet }) {
+function yeniLeadOlustur({ telefon, musteriAdi, urun, danismanAdi, danismanNumarasi, ozet, baslik }) {
   sayac += 1;
   const id = `L${Date.now()}${sayac}`;
   const lead = {
@@ -32,6 +32,12 @@ function yeniLeadOlustur({ telefon, musteriAdi, urun, danismanAdi, danismanNumar
     danismanAdi: danismanAdi || null,
     danismanNumarasi: danismanNumarasi || null,
     ozet,
+    // 27.07.2026 eklendi: destek talebi (zeyil/iştira vb.) gibi kendi basina
+    // bir "is" olarak takip edilen kayitlar icin KISA BIR BASLIK - normal
+    // musteri taleplerinde (urun zaten aciklayici oldugu icin) null kalir.
+    // Bekleyen İş ozetinde (server.js -> acikIsSatiriOlustur) doluysa urun'un
+    // yaninda/yerine gosterilir.
+    baslik: baslik || null,
     durum: "Açık",
     notlar: [], // { metin, tarih }
     belgeler: [], // { dosyaAdi, mimeType, veriBase64, yuklenmeZamani }

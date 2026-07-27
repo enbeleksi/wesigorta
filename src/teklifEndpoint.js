@@ -419,6 +419,7 @@ module.exports = function (app, pool) {
   async function musteriYazdiBildir(telefonHam) {
     const kayit = await sonTeklifiBul(telefonHam);
     if (!kayit) return false;
+    const hedef10 = telefonSon10Hane(telefonHam);
 
     const alicilar = new Set();
     if (process.env.NOTIFY_NUMBER) alicilar.add(process.env.NOTIFY_NUMBER.trim());
@@ -442,14 +443,33 @@ module.exports = function (app, pool) {
       }
     }
 
-    // Bu kaydı "bildirildi" olarak işaretliyoruz ki AYNI müşteri sonraki
-    // mesajlarında (hâlâ 30 günlük pencere içinde olsa bile) tekrar bu
-    // bildirim+teşekkür akışını tetiklemesin - sonTeklifiBul artık bu
-    // kaydı döndürmeyecek.
+    // Bu kaydı (VE aynı telefon numarasına ait, henüz bildirilmemiş TÜM diğer
+    // eski kayıtları) "bildirildi" olarak işaretliyoruz ki AYNI müşteri
+    // sonraki mesajlarında (hâlâ 30 günlük pencere içinde olsa bile) tekrar bu
+    // bildirim+teşekkür akışını tetiklemesin.
+    //
+    // 27.07.2026 DÜZELTMESİ: Eskiden SADECE sonTeklifiBul'un döndürdüğü TEK
+    // kayıt (kayit.id) işaretleniyordu. Ama aynı müşteri web formunu birden
+    // fazla kez doldurmuşsa (ya da aynı numarayla birden fazla web_teklifler
+    // satırı varsa), sonTeklifiBul her seferinde EN YENİ bildirilmemiş kaydı
+    // buluyor - bir önceki mesajda bir satır işaretlendiğinde, BİR SONRAKİ
+    // mesajda hâlâ işaretlenmemiş bir sonraki eski satır eşleşiyor ve
+    // "Mesajınız için teşekkür ederiz..." mesajı HER MESAJDA tekrar tekrar
+    // gönderiliyordu (ekran görüntüsünde "DASK", sonra "Hayır", sonra "Ev
+    // Sahibiyim" - müşterinin gönderdiği HER mesajdan sonra bu mesaj tekrar
+    // düşmüştü). Artık eşleşen telefon numarasına ait TÜM bildirilmemiş
+    // kayıtlar tek seferde işaretleniyor, böylece bu mesaj gerçekten sadece
+    // İLK mesajda bir kez gidiyor.
     try {
-      await pool.query('UPDATE web_teklifler SET yanit_bildirildi_mi = TRUE WHERE id = $1', [kayit.id]);
+      await pool.query(
+        `UPDATE web_teklifler
+         SET yanit_bildirildi_mi = TRUE
+         WHERE yanit_bildirildi_mi IS NOT TRUE
+           AND RIGHT(regexp_replace(telefon, '[^0-9]', '', 'g'), 10) = $1`,
+        [hedef10]
+      );
     } catch (e) {
-      console.error('web_teklifler "bildirildi" olarak işaretlenemedi (id=' + kayit.id + '):', e.message);
+      console.error('web_teklifler "bildirildi" olarak işaretlenemedi (telefon=' + telefonHam + '):', e.message);
     }
 
     return true;

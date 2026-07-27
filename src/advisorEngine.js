@@ -35,6 +35,9 @@ const {
 } = require("./validators");
 const flows = require("./flows");
 const conversationEngine = require("./conversationEngine");
+const sozlukSSS = require("./sozlukSSS");
+const { gunSelamlamasi } = require("./gunSelamlama");
+const musteriProfilStore = require("./musteriProfilStore");
 const { belgeleriTekPdfeBirlestir } = require("./pdfBirlestir");
 const { belgeFotografiAnalizEt, kimlikOnArkaTutarliMi } = require("./belgeAnaliz");
 const { vefatTeminatiHesapla } = require("./vefatTeminatiHesapla");
@@ -1019,9 +1022,10 @@ const ANA_MENU_SECENEKLERI = [
   "Bekleyen İş",
   "Destek Talebi Oluştur",
   "Yaklaşan Yenilemeler",
-  "Yeni Yenileme Takibi",
+  "Yenileme Takibi Ekle",
   "BES Fonları",
   "Doküman Merkezi",
+  "SSS",
   "Performansım"
 ];
 
@@ -1035,7 +1039,7 @@ async function karsilamaGoster(from, session) {
   session.state = "DANISMAN_KARSILAMA";
   await sendList(
     from,
-    `Merhaba ${danisman ? danisman.name : ""}! 👋 Umarım gününüz güzel geçiyordur. WE Sigorta danışman asistanınız hazır — size bugün nasıl yardımcı olabilirim?`,
+    `${gunSelamlamasi()} ${danisman ? danisman.name : ""}! 👋 Umarım gününüz güzel geçiyordur. WE Sigorta danışman asistanınız hazır — size bugün nasıl yardımcı olabilirim?`,
     "Seçin",
     ANA_MENU_SECENEKLERI
   );
@@ -1746,6 +1750,23 @@ async function satisTamamla(from, session) {
   });
   session.satisBelgeler.forEach((belge) => leadStore.belgeEkle(yeniLead.id, belge));
 
+  // 27.07.2026 eklendi: bu akis (Satis Kaydi - Hayat/BES) musteriProfilStore'a
+  // hic yazmiyordu, bu yuzden burada satisi TAMAMLAYAN musteriler bir dahaki
+  // sefere yazdiginda ismiyle karsilanmiyordu (bkz. conversationEngine.js'deki
+  // baslaYeniKonusma). Musterinin kendi cep telefonunu (a.sigortali_cep),
+  // musteriyeSatisBildirimiGonder'de de kullanilan ayni normallestirme
+  // fonksiyonuyla (telefonUluslararasiFormata) anahtarlayip kalici profile
+  // yaziyoruz - boylece "from" (danisman numarasi OLABILIR) ile degil,
+  // musterinin GERCEK numarasiyla dogru profil guncelleniyor. Bu akista zaten
+  // imzali "Açık Rıza Metni" toplandigi icin KVKK onayini da burada isaretliyoruz.
+  const musteriProfilNumarasi = telefonUluslararasiFormata(a.sigortali_cep);
+  if (musteriProfilNumarasi) {
+    musteriProfilStore.profilGuncelle(musteriProfilNumarasi, {
+      adSoyad: a.musteri_ad_soyad,
+      kvkkOnayVerildi: true
+    });
+  }
+
   // Musteri kendi kendine basvurduysa, danisman devrede olmadigi icin bu
   // satisi bir INSANIN (danisman) fark edebilmesi icin ayrica WhatsApp
   // bildirimi gonderiyoruz - mail basarili/basarisiz FARK ETMEKSIZIN, cunku
@@ -1930,7 +1951,25 @@ async function performansGoster(from, session) {
   await devamMenuGoster(from, session);
 }
 
-// --- Destek Talebi: mevcut bir talebe bagli, ilgili kisiye aninda iletilen destek mesaji ---
+// --- Destek Talebi: mevcut bir musteri/police ile ilgili ek servis talebi
+// (zeyil, iştira, iptal, adres/bilgi güncelleme vb.) - 27.07.2026'da
+// kullanicinin talebiyle YENIDEN TASARLANDI:
+// 1) Once NE ICIN kullanildigina dair kisa bir aciklama gosteriliyor.
+// 2) Ilgili musteri/talep secildikten sonra bir BASLIK isteniyor.
+// 3) Ardindan aciklama (serbest metin) isteniyor.
+// 4) Destek talebi artik SADECE ilgili kisilere bildirim gitmesiyle
+//    kalmiyor - kendi basina, BASLIGIYLA BIRLIKTE, bekleyen iş listesine
+//    (leadStore'da yeni bir "Açık" kayit olarak) ekleniyor (bkz.
+//    destekTalebiGonder sonundaki leadStore.yeniLeadOlustur cagrisi).
+async function destekTalebiAciklamaGoster(from, session) {
+  await sendText(
+    from,
+    "🆘 Destek Talebi, mevcut bir müşteriniz/poliçenizle ilgili ek bir servis talebini (örneğin zeyil, iştira, iptal, adres/bilgi güncelleme gibi) ilgili kişilere iletmek için kullanılır.\n\n" +
+      "Önce hangi müşteri/talep ile ilgili olduğunu seçeceksiniz, sonra talebinize kısa bir başlık ve açıklama yazacaksınız - bu destek talebi kendi başına bir bekleyen iş olarak takip edilecek."
+  );
+  await destekLeadSecimiGoster(from, session);
+}
+
 async function destekLeadSecimiGoster(from, session) {
   const kendiLeadleri = leadStore.tumLeadleriGetir().filter((l) => l.danismanNumarasi === from);
 
@@ -1953,14 +1992,21 @@ async function destekLeadSecimiGoster(from, session) {
   await sendList(from, "Hangi talep/sigortalı ile ilgili destek almak istersiniz?", "Talep Seç", satirlar);
 }
 
-async function destekMetniIste(from, session, lead) {
-  session.state = "DANISMAN_DESTEK_METIN_BEKLE";
+async function destekBaslikIste(from, session, lead) {
+  session.state = "DANISMAN_DESTEK_BASLIK_BEKLE";
   session.danismanDestekLeadId = lead.id;
-  await sendText(from, `${lead.musteriAdi || lead.telefon} (${lead.urun}) için ne konuda destek almak istersiniz? Kısaca yazar mısınız?`);
+  await sendText(from, `${lead.musteriAdi || lead.telefon} (${lead.urun}) için bu destek talebine kısa bir başlık verir misiniz? (örn: "Zeyil talebi - adres değişikliği")`);
+}
+
+async function destekMetniIste(from, session, baslik) {
+  session.state = "DANISMAN_DESTEK_METIN_BEKLE";
+  session.danismanDestekBaslik = baslik;
+  await sendText(from, `Şimdi ne konuda destek almak istediğinizi kısaca yazar mısınız?`);
 }
 
 async function destekTalebiGonder(from, session, destekMetni) {
   const lead = leadStore.leadGetir(session.danismanDestekLeadId);
+  const baslik = session.danismanDestekBaslik;
   if (!lead) {
     await sendText(from, "İlgili talebi bulamadım, tekrar deneyebilir misiniz?");
     await devamMenuGoster(from, session);
@@ -1972,14 +2018,15 @@ async function destekTalebiGonder(from, session, destekMetni) {
   const flow = flowBulUrunAdindan(lead.urun);
 
   const detay =
-    `🆘 Destek Talebi\n` +
+    `🆘 Destek Talebi: ${baslik}\n` +
     `📌 ${danismanAdi} tarafından oluşturuldu.\n\n` +
     `Sigortalı: ${lead.musteriAdi || lead.telefon}\n` +
     `Ürün: ${lead.urun}\n` +
     `Telefon: ${lead.telefon}\n\n` +
     `Mesaj: ${destekMetni}`;
 
-  leadStore.notEkle(lead.id, `🆘 Destek Talebi: ${destekMetni}`);
+  // Orijinal talebe de (gecmisini kaybetmesin diye) kisa bir not birakiyoruz.
+  leadStore.notEkle(lead.id, `🆘 Destek Talebi (${baslik}): ${destekMetni}`);
 
   // Urune gore dogru kisiye (elementerde Bahadır, hayat/BES'te Enbel) +
   // her zaman Enbel'e kopya olacak sekilde ayni guvenlik agi mantigi
@@ -1992,7 +2039,24 @@ async function destekTalebiGonder(from, session, destekMetni) {
     await conversationEngine.bildirimGonder(numara, lead.urun, lead.musteriAdi || lead.telefon, lead.telefon, detay, detay);
   }
 
-  await sendText(from, "Destek talebiniz iletildi ✅ En kısa sürede dönüş yapılacaktır.");
+  // 27.07.2026 eklendi: destek talebi artik SADECE bir bildirim/not degil -
+  // kendi basina, "Bekleyen İş" listesinde takip edilen YENI bir Açık kayit.
+  // danismanNumarasi = "from" (talebi ACAN kisi) - boylece kendi Bekleyen İş
+  // listesinde gorunur ve kapatana kadar (Olumlu/Olumsuz) gunluk ozette
+  // hatirlatilmaya devam eder. urun alani ORIJINAL urunu tasimaya devam eder
+  // (elementer/Bahadır filtrelemesi bunun uzerinden calistigi icin), baslik
+  // ayri bir alanda tutulur (bkz. server.js -> acikIsSatiriOlustur).
+  leadStore.yeniLeadOlustur({
+    telefon: lead.telefon,
+    musteriAdi: lead.musteriAdi,
+    urun: lead.urun,
+    danismanAdi: danismanAdi,
+    danismanNumarasi: from,
+    ozet: detay,
+    baslik
+  });
+
+  await sendText(from, "Destek talebiniz iletildi ✅ Bekleyen İş listenize de eklendi, en kısa sürede dönüş yapılacaktır.");
   await devamMenuGoster(from, session);
 }
 
@@ -2209,6 +2273,18 @@ async function yenilemelerimGoster(from, session) {
   });
 
   await sendText(from, `📅 Yaklaşan Yenilemeler (30 gün)\n\n${satirlar.join("\n")}`);
+  await devamMenuGoster(from, session);
+}
+
+// --- SSS: sozlukSSS.js'teki TUM terim/urun aciklamalarini danismana dogrudan
+// gosterir (27.07.2026 eklendi, kullanicinin talebi). sozlukSSS.js'in musteri
+// tarafindaki otomatik "X nedir?" tetiklemesinden BAGIMSIZ, ayri bir giris
+// noktasi - danisman menuden tikladiginda TUM icerigi (soru kalibi beklemeden)
+// gorur.
+async function sssGoster(from, session) {
+  const [terimlerMetni, urunlerMetni] = sozlukSSS.tumSssIcerigiMesajlari();
+  await sendText(from, terimlerMetni);
+  await sendText(from, urunlerMetni);
   await devamMenuGoster(from, session);
 }
 
@@ -2728,14 +2804,14 @@ async function handleAdvisorMessage(from, parsed) {
         return;
       }
       if (userText === "Destek Talebi Oluştur") {
-        await destekLeadSecimiGoster(from, session);
+        await destekTalebiAciklamaGoster(from, session);
         return;
       }
       if (userText === "Yaklaşan Yenilemeler") {
         await yenilemelerimGoster(from, session);
         return;
       }
-      if (userText === "Yeni Yenileme Takibi") {
+      if (userText === "Yenileme Takibi Ekle") {
         await yenilemeBaslat(from, session);
         return;
       }
@@ -2745,6 +2821,10 @@ async function handleAdvisorMessage(from, parsed) {
       }
       if (userText === "Doküman Merkezi") {
         await formUrunSec(from, session);
+        return;
+      }
+      if (userText === "SSS") {
+        await sssGoster(from, session);
         return;
       }
       if (userText === "Performansım") {
@@ -2871,8 +2951,17 @@ async function handleAdvisorMessage(from, parsed) {
     case "DANISMAN_NOT_BEKLE": {
       const lead = leadStore.notEkle(session.danismanSeciliLeadId, userText);
       await sendText(from, "Not eklendi ✅");
-      if (lead) await leadDetayGoster(from, session, lead);
-      else await devamMenuGoster(from, session);
+      if (lead) {
+        // 27.07.2026 eklendi: WhatsApp'tan (herhangi bir danisman/Bahadır/Enbel
+        // tarafindan) not eklendiginde de ilgili herkese bilgilendirme gitsin.
+        const ekleyen = danismaniBul(from);
+        conversationEngine
+          .notEklendiBildirimiGonder(lead, userText, ekleyen ? ekleyen.name : null, from)
+          .catch((err) => console.error("WhatsApp'tan not bildirimi gonderilemedi:", err));
+        await leadDetayGoster(from, session, lead);
+      } else {
+        await devamMenuGoster(from, session);
+      }
       return;
     }
 
@@ -3172,7 +3261,16 @@ async function handleAdvisorMessage(from, parsed) {
         await destekLeadSecimiGoster(from, session);
         return;
       }
-      await destekMetniIste(from, session, lead);
+      await destekBaslikIste(from, session, lead);
+      return;
+    }
+
+    case "DANISMAN_DESTEK_BASLIK_BEKLE": {
+      if (!userText) {
+        await sendText(from, "Lütfen bu destek talebi için kısa bir başlık yazar mısınız?");
+        return;
+      }
+      await destekMetniIste(from, session, userText);
       return;
     }
 
@@ -3244,4 +3342,17 @@ async function handleAdvisorMessage(from, parsed) {
   }
 }
 
-module.exports = { isDanisman, handleAdvisorMessage, musteriSatisBaslat };
+// 27.07.2026 eklendi: yeni bir ELEMENTER talep bildiriminin hemen ardindan
+// (bkz. conversationEngine.js'deki finishFlow + yeniTalepAksiyonHookAyarla)
+// ilgili numaraya "Ne yapmak istersiniz?" (Not Ekle/Durum Değiştir/Hatırlatma
+// Kur) sorusunu göstermek icin disaridan cagirilan giris noktasi. Mevcut
+// leadDetayGoster ile AYNI ekrani kullanir, boylece kisi "Not Ekle" derse
+// normal WhatsApp danisman akisi (DANISMAN_LEAD_DETAY state'i) sorunsuzca
+// devam eder.
+async function yeniTalepIcinAksiyonSor(numara, lead) {
+  const session = getSession(numara);
+  await sendText(numara, `🆕 Az önce oluşturulan bu talep için hemen bir aksiyon almak ister misiniz?`);
+  await leadDetayGoster(numara, session, lead);
+}
+
+module.exports = { isDanisman, handleAdvisorMessage, musteriSatisBaslat, yeniTalepIcinAksiyonSor };

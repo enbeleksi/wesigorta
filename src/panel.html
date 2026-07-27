@@ -544,7 +544,7 @@ async function renderLeadsView() {
       <div class="leadCard" data-id="${lead.id}">
         <div class="leadTop">
           <div>
-            <h4>${escapeHtml(lead.musteriAdi || lead.telefon)} — ${escapeHtml(lead.urun)}</h4>
+            <h4>${escapeHtml(lead.musteriAdi || lead.telefon)} — ${lead.baslik ? `🆘 ${escapeHtml(lead.baslik)} (${escapeHtml(lead.urun)})` : escapeHtml(lead.urun)}</h4>
             <div class="meta">📞 ${escapeHtml(lead.telefon)} &nbsp;|&nbsp; 👤 ${escapeHtml(lead.danismanAdi || 'Belirsiz')} &nbsp;|&nbsp; 🕐 ${formatTarih(lead.olusturulmaZamani)}</div>
           </div>
           <span class="${badgeClass(lead.durum)}">${escapeHtml(lead.durum)}</span>

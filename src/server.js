@@ -3,7 +3,15 @@ const express = require("express");
 const bodyParser = require("body-parser");
 const path = require("path");
 const multer = require("multer");
-const { handleIncoming, hatirlatmaGonder, memnuniyetAnketiGonder, sablonParametresiIcinTemizle } = require("./conversationEngine");
+const {
+  handleIncoming,
+  hatirlatmaGonder,
+  cokSatirliMesajGonder,
+  memnuniyetAnketiGonder,
+  notEklendiBildirimiGonder,
+  yeniTalepAksiyonHookAyarla,
+  sablonParametresiIcinTemizle
+} = require("./conversationEngine");
 const advisorEngine = require("./advisorEngine");
 const { sendText, sendDocument, sendTemplate, sendAuthTemplate } = require("./loggedWhatsapp");
 const { sablonOlustur, sablonDetayGetir, sablonDuzenle } = require("./whatsapp");
@@ -694,12 +702,18 @@ app.post("/api/panel/leads/:id/durum", panelAuth, (req, res) => {
   res.json({ ok: true, lead });
 });
 
-app.post("/api/panel/leads/:id/not", panelAuth, (req, res) => {
+app.post("/api/panel/leads/:id/not", panelAuth, async (req, res) => {
   const { metin } = req.body;
   if (!metin) return res.status(400).json({ error: "metin gerekli" });
   const lead = leadStore.notEkle(req.params.id, metin);
   if (!lead) return res.status(404).json({ error: "Talep bulunamadi" });
   res.json({ ok: true, lead });
+  // 27.07.2026 eklendi: panelden (Bahadır/Enbel) not eklendiginde de ilgili
+  // herkese bilgilendirme gitsin - yanit ZATEN gonderildigi icin (yukarida)
+  // bu bildirim beklenmeden (await edilmeden), arka planda yapiliyor.
+  notEklendiBildirimiGonder(lead, metin, req.panelKullanici.ad, req.panelKullanici.telefon).catch((err) =>
+    console.error("Panelden not bildirimi gonderilemedi:", err)
+  );
 });
 
 // "YYYY-MM-DDTHH:mm" (HTML <input type="datetime-local"> ciktisi) formatindaki
@@ -1137,7 +1151,11 @@ function acikIsSatiriOlustur(lead) {
   const gunSayisi = Math.max(0, Math.floor((Date.now() - lead.olusturulmaZamani) / (24 * 60 * 60 * 1000)));
   const sonNot = lead.notlar && lead.notlar.length > 0 ? lead.notlar[lead.notlar.length - 1] : null;
   const notEki = sonNot ? `\n   📝 ${sonNot.metin}` : "";
-  return `• ${lead.musteriAdi || lead.telefon} - ${lead.urun}${lead.danismanAdi ? ` (${lead.danismanAdi})` : ""} - ${gunSayisi} gündür açık${notEki}`;
+  // 27.07.2026 eklendi: destek talebi gibi bir "baslik" tasiyan kayitlarda,
+  // urun'un yaninda 🆘 ile baslik da gosterilir (bkz. leadStore.js'deki
+  // yeniLeadOlustur'un baslik alani, advisorEngine.js'deki destekTalebiGonder).
+  const anaEtiket = lead.baslik ? `🆘 ${lead.baslik} (${lead.urun})` : lead.urun;
+  return `• ${lead.musteriAdi || lead.telefon} - ${anaEtiket}${lead.danismanAdi ? ` (${lead.danismanAdi})` : ""} - ${gunSayisi} gündür açık${notEki}`;
 }
 
 // 26.07.2026 eklendi: her sabah AYNI "☀️ Günaydın!" yerine, gunden gune
@@ -1166,8 +1184,57 @@ function gunlukGunaydinMesajiSec(gunAnahtari) {
   return GUNAYDIN_MESAJLARI[gunSayisi % GUNAYDIN_MESAJLARI.length];
 }
 
+// 27.07.2026 eklendi: o gun bekleyen (Açık) bir isi OLMAYAN danismanlara da
+// yine 09.30'da bir mesaj gitsin diye - "yeni iş beklediğimizi sevimli bir
+// dille hatırlatalım" (kullanicinin talebi). GUNAYDIN_MESAJLARI'nin aksine
+// burada BILEREK Math.random() kullaniliyor (kullanici acikca "random
+// gönder" dedi) - acilis mesaji zaten gune gore sabit oldugu icin, bu ekstra
+// mesajin da rastgele degismesi tekdüzeligi azaltiyor.
+const BOS_GUN_MESAJLARI = [
+  "Bugün için üzerinize kayıtlı bekleyen bir işiniz yok 🎉 Yeni bir talep için hazır olun, bugün güzel bir gün olabilir!",
+  "Şu an bekleyen bir işiniz görünmüyor. Belki bugün yeni bir müşteriyle tanışırsınız 😊",
+  "Bekleyen listeniz bomboş görünüyor! Yeni bir fırsat için gözünüz açık olsun 👀",
+  "Bugünlük bekleyen bir işiniz yok, tebrikler! Yeni bir talep geldiğinde hemen haber vereceğiz 🔔",
+  "Listenizde bekleyen bir şey yok - güzel bir boşluk. Yeni bir müşteri kapıyı çalarsa hemen burada olacak 🚪",
+  "Şu anda açık bir işiniz yok. Enerjinizi yeni fırsatlar için saklayın 💪",
+  "Bekleyen iş listeniz temiz! Yeni bir talep gelirse anında bilgilendirileceksiniz 📲",
+  "Bugün için bekleyen bir işiniz bulunmuyor. Belki de bugün yeni bir portföy günü olur 🌟",
+  "Şu an listenizde bekleyen bir iş yok - keyifli bir gün geçirin, yeni talepler yolda olabilir 🚀",
+  "Bekleyen işiniz yok görünüyor, harika! Yeni bir müşteri geldiğinde ilk sizi haberdar edeceğiz ✅"
+];
+function bosGunMesajiSec() {
+  return BOS_GUN_MESAJLARI[Math.floor(Math.random() * BOS_GUN_MESAJLARI.length)];
+}
+
+// 27.07.2026 eklendi: kullanicinin talebi uzerine, her gunluk ozet mesajinin
+// sonuna eklenen sabit kapanis cumlesi ("Bekleyen İş" WhatsApp menusundeki
+// interaktif listeyle ayni ifadeyi kullaniyor - danisman/Bahadır/Enbel bu
+// cumleyi gorunce zaten alisik oldugu "Bekleyen İş" akisina gitmesi gerektigini
+// anlar).
+const GUNLUK_OZET_KAPANIS_CUMLESI = "Açık talepleriniz aşağıda, detay görmek istediğinizi seçin:";
+
 let gunlukOzetGonderilenGun = null; // "YYYY-MM-DD" - ayni gun icinde tekrar gonderilmesin diye
 
+// 27.07.2026 eklendi: bir kisinin KENDI bolumunu (varsa isleri, yoksa rastgele
+// bir "bos gun" mesaji) olusturur - hem sade danisman mesajinda hem de
+// Bahadır/Enbel'in birlesik mesajindaki "kendi isleriniz" bolumunde kullanilir.
+function kisiselBolumMetni(kisiselIsler) {
+  return kisiselIsler.length > 0 ? kisiselIsler.map(acikIsSatiriOlustur).join("\n") : bosGunMesajiSec();
+}
+
+// 27.07.2026 eklendi: kullanicinin ekran goruntusuyle bildirdigi butun
+// sikayetleri (yanlis sablon basligi, satir sonlarinin kaybolmasi, Bahadır/
+// Enbel'e IKI AYRI mesaj gitmesi, bekleyen isi olmayanlara HIC mesaj
+// gitmemesi, kapanis cumlesinin olmamasi) tek seferde cozecek sekilde
+// YENIDEN YAZILDI:
+// - Artik SADECE gruplanmis (en az bir isi olan) numaralar degil, flows.js'deki
+//   TUM KAYITLI danisman numaralari (Enbel, Seda, Bahadır, Fırat, Furkan, ...)
+//   dolasilir - boylece bekleyen isi olmayan biri de mutlaka bir mesaj alir.
+// - Bahadır ve Enbel icin TEK bir mesaj gonderilir - "Kendi bekleyen işleriniz"
+//   ve "Ekibin ... bekleyen işleri" ayni mesajda iki ayri bolum olarak.
+// - Gonderim artik hatirlatmaGonder yerine cokSatirliMesajGonder ile yapiliyor
+//   (bkz. conversationEngine.js) - boylece pencere acikken satir sonlari VE
+//   baslik dogru gorunur.
 async function gunlukBekleyenIsOzetiKontrolEt() {
   const { saat, dakika, gunAnahtari } = simdiTurkiyeSaatineGore();
   if (saat !== 9 || dakika !== 30) return;
@@ -1175,51 +1242,48 @@ async function gunlukBekleyenIsOzetiKontrolEt() {
   gunlukOzetGonderilenGun = gunAnahtari; // ilk once isaretle - gonderim sirasinda bir hata olsa bile ayni dakika icinde tekrar tekrar denenmesin
 
   const acikLeadler = leadStore.tumLeadleriGetir().filter((l) => l.durum === "Açık");
-  if (acikLeadler.length === 0) return;
-
   const gunaydinMesaji = gunlukGunaydinMesajiSec(gunAnahtari);
-
-  // 1) Her danismana KENDI acik isleri (sadece numarasi bilinenler icin mumkun).
-  const danismanGruplari = new Map(); // numara -> lead[]
-  acikLeadler.forEach((l) => {
-    if (!l.danismanNumarasi) return;
-    if (!danismanGruplari.has(l.danismanNumarasi)) danismanGruplari.set(l.danismanNumarasi, []);
-    danismanGruplari.get(l.danismanNumarasi).push(l);
-  });
-
-  for (const [numara, leadler] of danismanGruplari) {
-    const mesaj = `${gunaydinMesaji}\n\nBugün bekleyen işleriniz:\n\n${leadler.map(acikIsSatiriOlustur).join("\n")}`;
-    try {
-      await hatirlatmaGonder(numara, mesaj);
-      console.log(`Gunluk bekleyen is ozeti gonderildi: ${numara} (${leadler.length} is)`);
-    } catch (err) {
-      console.error(`Gunluk bekleyen is ozeti gonderilemedi (${numara}):`, err?.response?.data || err.message);
-    }
-  }
-
-  // 2) Bahadır'a TUM elementer branslardaki acik isler (kim tarafindan
-  //    acilmis/atanmis olursa olsun).
-  const bahadir = PANEL_KULLANICILARI.find((k) => k.kullaniciAdi === "bahadireksi");
   const elementerAcikIsler = acikLeadler.filter((l) => urunElementerMi(l.urun));
-  if (bahadir && elementerAcikIsler.length > 0) {
-    const mesaj = `${gunaydinMesaji}\n\nBugün TÜM EKİBİN elementer bekleyen işleri:\n\n${elementerAcikIsler.map(acikIsSatiriOlustur).join("\n")}`;
-    try {
-      await hatirlatmaGonder(bahadir.telefon, mesaj);
-      console.log(`Gunluk elementer ozeti Bahadır'a gonderildi (${elementerAcikIsler.length} is)`);
-    } catch (err) {
-      console.error("Gunluk elementer ozeti gonderilemedi (Bahadır):", err?.response?.data || err.message);
-    }
-  }
 
-  // 3) Enbel'e TUM acik isler ("tüm üretimler" - hangi brans/danisman olursa olsun).
+  const bahadir = PANEL_KULLANICILARI.find((k) => k.kullaniciAdi === "bahadireksi");
   const enbel = PANEL_KULLANICILARI.find((k) => k.kullaniciAdi === "enbeleksi");
-  if (enbel) {
-    const mesaj = `${gunaydinMesaji}\n\nBugün TÜM EKİBİN bekleyen işleri:\n\n${acikLeadler.map(acikIsSatiriOlustur).join("\n")}`;
+  const tumDanismanlar = (flows.dask && flows.dask.advisors) || [];
+
+  for (const danisman of tumDanismanlar) {
+    const kisiselIsler = acikLeadler.filter((l) => l.danismanNumarasi === danisman.number);
+
+    let mesaj;
+    let logEtiketi;
+
+    if (bahadir && danisman.number === bahadir.telefon) {
+      const ekipBolumu =
+        elementerAcikIsler.length > 0
+          ? elementerAcikIsler.map(acikIsSatiriOlustur).join("\n")
+          : "Şu an ekipte bekleyen elementer bir iş yok 🎉";
+      mesaj =
+        `${gunaydinMesaji}\n\n` +
+        `👤 Kendi bekleyen işleriniz:\n${kisiselBolumMetni(kisiselIsler)}\n\n` +
+        `👥 Ekibin elementer bekleyen işleri:\n${ekipBolumu}\n\n` +
+        GUNLUK_OZET_KAPANIS_CUMLESI;
+      logEtiketi = `Bahadır (${kisiselIsler.length} kendi, ${elementerAcikIsler.length} ekip)`;
+    } else if (enbel && danisman.number === enbel.telefon) {
+      const ekipBolumu = acikLeadler.length > 0 ? acikLeadler.map(acikIsSatiriOlustur).join("\n") : "Şu an ekipte bekleyen bir iş yok 🎉";
+      mesaj =
+        `${gunaydinMesaji}\n\n` +
+        `👤 Kendi bekleyen işleriniz:\n${kisiselBolumMetni(kisiselIsler)}\n\n` +
+        `👥 Ekibin TÜM bekleyen işleri:\n${ekipBolumu}\n\n` +
+        GUNLUK_OZET_KAPANIS_CUMLESI;
+      logEtiketi = `Enbel (${kisiselIsler.length} kendi, ${acikLeadler.length} ekip)`;
+    } else {
+      mesaj = `${gunaydinMesaji}\n\nBugün bekleyen işleriniz:\n\n${kisiselBolumMetni(kisiselIsler)}\n\n${GUNLUK_OZET_KAPANIS_CUMLESI}`;
+      logEtiketi = `${danisman.name} (${kisiselIsler.length} iş)`;
+    }
+
     try {
-      await hatirlatmaGonder(enbel.telefon, mesaj);
-      console.log(`Gunluk genel ozet Enbel'e gonderildi (${acikLeadler.length} is)`);
+      await cokSatirliMesajGonder(danisman.number, mesaj);
+      console.log(`Gunluk bekleyen is ozeti gonderildi: ${logEtiketi}`);
     } catch (err) {
-      console.error("Gunluk genel ozet gonderilemedi (Enbel):", err?.response?.data || err.message);
+      console.error(`Gunluk bekleyen is ozeti gonderilemedi (${danisman.name}):`, err?.response?.data || err.message);
     }
   }
 }
@@ -1242,6 +1306,12 @@ async function tumVeriyiKaydet() {
     musteriProfilStore.kaydet().catch((err) => console.error("Müşteri profilleri kaydedilemedi:", err.message))
   ]);
 }
+
+// 27.07.2026 eklendi: conversationEngine.js, yeni bir elementer talep
+// bildiriminin ardindan advisorEngine.js'deki danisman-oturum ekranini
+// gosterebilsin diye (dongusel require olmadan) - bkz. conversationEngine.js
+// finishFlow ve advisorEngine.js yeniTalepIcinAksiyonSor.
+yeniTalepAksiyonHookAyarla(advisorEngine.yeniTalepIcinAksiyonSor);
 
 async function baslat() {
   // db.init() basarisiz olursa (orn. DATABASE_URL tanimli ama baglanti
