@@ -1124,9 +1124,46 @@ function urunElementerMi(urun) {
   return ELEMENTER_ANAHTAR_KELIMELER.some((k) => normalized.includes(k));
 }
 
+// 26.07.2026 eklendi: bir isin en son eklenen notu (varsa) satirin altina
+// KUCUK bir 📝 satiri olarak eklenir - boylece "not ekleyebilsin, eklenen
+// notu herkes görsün" talebi karsilaniyor: not, panelden (Bahadır/Enbel -
+// hicbir kisitlama yok, TUM isler gorunur) ya da WhatsApp'tan ("Bekleyen İş"
+// menusu - danisman kendi isine, Bahadır/Enbel ise TUM ekibin islerine not
+// ekleyebilir, bkz. advisorEngine.js'deki anaMenuGoster) eklenmis olsun,
+// SADECE EN SON eklenen not gosterilir (tum not gecmisini gostermek gunluk
+// ozeti cok kalabaliklastirirdi) - tam not gecmisi hala panelde/WhatsApp'taki
+// talep detayinda goruluyor.
 function acikIsSatiriOlustur(lead) {
   const gunSayisi = Math.max(0, Math.floor((Date.now() - lead.olusturulmaZamani) / (24 * 60 * 60 * 1000)));
-  return `• ${lead.musteriAdi || lead.telefon} - ${lead.urun}${lead.danismanAdi ? ` (${lead.danismanAdi})` : ""} - ${gunSayisi} gündür açık`;
+  const sonNot = lead.notlar && lead.notlar.length > 0 ? lead.notlar[lead.notlar.length - 1] : null;
+  const notEki = sonNot ? `\n   📝 ${sonNot.metin}` : "";
+  return `• ${lead.musteriAdi || lead.telefon} - ${lead.urun}${lead.danismanAdi ? ` (${lead.danismanAdi})` : ""} - ${gunSayisi} gündür açık${notEki}`;
+}
+
+// 26.07.2026 eklendi: her sabah AYNI "☀️ Günaydın!" yerine, gunden gune
+// degisen 10 farkli pozitif/enerjik acilis mesajindan biri kullanilsin diye
+// (kullanicinin talebi). gunAnahtari'ye ("YYYY-MM-DD") gore SABIT bir mesaj
+// secilir (Math.random KULLANILMAZ) - boylece: 1) o gun danismana/Bahadır'a/
+// Enbel'e giden UC mesaj da BIRBIRIYLE AYNI acilisi kullanir (tutarli), 2)
+// gunden gune sirayla degisir (10 gunde bir dongu tekrar eder), 3) test/deploy
+// sirasinda ayni gun icin hep ayni sonuc cikar (rastgelelik yok).
+const GUNAYDIN_MESAJLARI = [
+  "☀️ Günaydın! Yeni bir gün, yeni fırsatlar demek.",
+  "🌅 Günaydın! Bugün de harika işler çıkaracağınıza inanıyoruz.",
+  "🌞 Günaydın! Enerjiniz bol, gününüz bereketli olsun.",
+  "✨ Günaydın! Küçük adımlar büyük başarılara götürür, bugün de bir adım daha atalım.",
+  "🌻 Günaydın! Güzel bir gün sizi bekliyor, dolu dolu geçirin.",
+  "💪 Günaydın! Bugün de ekip olarak harika işler çıkaracağız.",
+  "🌈 Günaydın! Gülümseyerek başlayan gün, güzel biter.",
+  "🚀 Günaydın! Hedeflerimize bir gün daha yaklaşıyoruz.",
+  "🍀 Günaydın! Bugün şansınız ve emeğiniz bol olsun.",
+  "🌸 Günaydın! Yeni gün, yeni bir başarı hikayesi yazmak için hazırız."
+];
+
+function gunlukGunaydinMesajiSec(gunAnahtari) {
+  const [yil, ay, gun] = gunAnahtari.split("-").map(Number);
+  const gunSayisi = Math.floor(Date.UTC(yil, ay - 1, gun) / (24 * 60 * 60 * 1000));
+  return GUNAYDIN_MESAJLARI[gunSayisi % GUNAYDIN_MESAJLARI.length];
 }
 
 let gunlukOzetGonderilenGun = null; // "YYYY-MM-DD" - ayni gun icinde tekrar gonderilmesin diye
@@ -1140,6 +1177,8 @@ async function gunlukBekleyenIsOzetiKontrolEt() {
   const acikLeadler = leadStore.tumLeadleriGetir().filter((l) => l.durum === "Açık");
   if (acikLeadler.length === 0) return;
 
+  const gunaydinMesaji = gunlukGunaydinMesajiSec(gunAnahtari);
+
   // 1) Her danismana KENDI acik isleri (sadece numarasi bilinenler icin mumkun).
   const danismanGruplari = new Map(); // numara -> lead[]
   acikLeadler.forEach((l) => {
@@ -1149,7 +1188,7 @@ async function gunlukBekleyenIsOzetiKontrolEt() {
   });
 
   for (const [numara, leadler] of danismanGruplari) {
-    const mesaj = `☀️ Günaydın! Bugün bekleyen işleriniz:\n\n${leadler.map(acikIsSatiriOlustur).join("\n")}`;
+    const mesaj = `${gunaydinMesaji}\n\nBugün bekleyen işleriniz:\n\n${leadler.map(acikIsSatiriOlustur).join("\n")}`;
     try {
       await hatirlatmaGonder(numara, mesaj);
       console.log(`Gunluk bekleyen is ozeti gonderildi: ${numara} (${leadler.length} is)`);
@@ -1163,7 +1202,7 @@ async function gunlukBekleyenIsOzetiKontrolEt() {
   const bahadir = PANEL_KULLANICILARI.find((k) => k.kullaniciAdi === "bahadireksi");
   const elementerAcikIsler = acikLeadler.filter((l) => urunElementerMi(l.urun));
   if (bahadir && elementerAcikIsler.length > 0) {
-    const mesaj = `☀️ Günaydın! Bugün TÜM EKİBİN elementer bekleyen işleri:\n\n${elementerAcikIsler.map(acikIsSatiriOlustur).join("\n")}`;
+    const mesaj = `${gunaydinMesaji}\n\nBugün TÜM EKİBİN elementer bekleyen işleri:\n\n${elementerAcikIsler.map(acikIsSatiriOlustur).join("\n")}`;
     try {
       await hatirlatmaGonder(bahadir.telefon, mesaj);
       console.log(`Gunluk elementer ozeti Bahadır'a gonderildi (${elementerAcikIsler.length} is)`);
@@ -1175,7 +1214,7 @@ async function gunlukBekleyenIsOzetiKontrolEt() {
   // 3) Enbel'e TUM acik isler ("tüm üretimler" - hangi brans/danisman olursa olsun).
   const enbel = PANEL_KULLANICILARI.find((k) => k.kullaniciAdi === "enbeleksi");
   if (enbel) {
-    const mesaj = `☀️ Günaydın! Bugün TÜM EKİBİN bekleyen işleri:\n\n${acikLeadler.map(acikIsSatiriOlustur).join("\n")}`;
+    const mesaj = `${gunaydinMesaji}\n\nBugün TÜM EKİBİN bekleyen işleri:\n\n${acikLeadler.map(acikIsSatiriOlustur).join("\n")}`;
     try {
       await hatirlatmaGonder(enbel.telefon, mesaj);
       console.log(`Gunluk genel ozet Enbel'e gonderildi (${acikLeadler.length} is)`);

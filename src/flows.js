@@ -239,8 +239,10 @@ const DANISMANLAR = [
   { name: "Enbel", number: "905326876126" },
   { name: "Seda", number: "905324176026" },
   { name: "Bahadır", number: "905380711711" },
-  { name: "Fırat", number: "905527902616" }
-  // Yasemin, Furkan, Simge, Tuğçe - telefon numaralari henuz bizde yok.
+  { name: "Fırat", number: "905527902616" },
+  // 27.07.2026 eklendi (numara kullanicidan geldi: 0532 395 96 12 -> 90 ile normallestirildi).
+  { name: "Furkan", number: "905323959612" }
+  // Yasemin, Simge, Tuğçe - telefon numaralari henuz bizde yok.
 ];
 
 // Musteriye "hangi danisman" diye sorulurken gosterilen TAM liste (numarasi

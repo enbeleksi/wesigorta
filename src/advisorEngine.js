@@ -919,6 +919,17 @@ function isDanisman(numara) {
   return !!danismaniBul(numara);
 }
 
+// 26.07.2026 eklendi: "bahadır veya enbel veya herhangi bir danışman bekleyen
+// işe bir not ekleyebilsin" talebi icin - Bahadır ve Enbel'in numaralari
+// "yonetici" sayilir: "Bekleyen İş" menusunden SADECE kendi degil, TUM
+// danismanlarin acik islerini gorup (ve dolayisiyla not ekleyebilir), bkz.
+// asagidaki anaMenuGoster. Diger danismanlar (Seda, Fırat, ve numarasi henuz
+// bizde olmayanlar) hala SADECE kendi acik islerini gorur/not ekler - zaten
+// gunluk 09.30 ozetinde de sadece kendi isleri onlara gidiyor (bkz. server.js).
+const YONETICI_NUMARALARI = DANISMANLAR.filter((d) => d.name === "Enbel" || d.name === "Bahadır").map(
+  (d) => d.number
+);
+
 // --- Turkce karakter toleransli secenek eslestirme (conversationEngine.js'deki
 // ile ayni mantik, kucuk oldugu icin burada ayrica tanimlandi) ---
 function normalizeTr(str) {
@@ -1055,35 +1066,53 @@ async function formUrunSec(from, session) {
 // --- Mevcut talepleri listeleme/yonetme ---
 async function anaMenuGoster(from, session) {
   const danisman = danismaniBul(from);
-  const acikLeadler = leadStore
+  const yoneticiMi = YONETICI_NUMARALARI.includes(from);
+  // Yonetici (Bahadır/Enbel) icin TUM ekibin acik isleri, digerleri icin
+  // sadece kendi acik isleri (bkz. yukaridaki YONETICI_NUMARALARI yorumu).
+  const tumAcikLeadler = leadStore
     .tumLeadleriGetir()
-    .filter((l) => l.danismanNumarasi === from && l.durum === "Açık");
+    .filter((l) => (yoneticiMi ? true : l.danismanNumarasi === from) && l.durum === "Açık");
 
-  session.state = "DANISMAN_LEAD_SECIMI";
-  session.danismanLeadListesi = acikLeadler.map((l) => l.id);
-
-  if (acikLeadler.length === 0) {
+  if (tumAcikLeadler.length === 0) {
+    session.state = "DANISMAN_LEAD_SECIMI";
+    session.danismanLeadListesi = [];
     await sendText(
       from,
-      `Şu an açık bir talebiniz yok. 🎉 Yeni bir talep oluşturmak isterseniz "evet" yazabilirsiniz.`
+      yoneticiMi
+        ? `Şu an ekipte açık bir iş yok. 🎉`
+        : `Şu an açık bir talebiniz yok. 🎉 Yeni bir talep oluşturmak isterseniz "evet" yazabilirsiniz.`
     );
     return;
   }
 
+  // WhatsApp interaktif listesi en fazla 10 satir destekliyor. Yonetici
+  // gorunumunde TUM ekibin isleri bir arada gorunebilecegi icin, en uzun
+  // suredir acik (en "gecikmis") 10 tanesi gosterilir - geri kalani icin
+  // panel her zaman TAM listeyi (kisitlamasiz) gosterir.
+  const siraliLeadler = yoneticiMi
+    ? [...tumAcikLeadler].sort((a, b) => a.olusturulmaZamani - b.olusturulmaZamani)
+    : tumAcikLeadler;
+  const acikLeadler = siraliLeadler.slice(0, 10);
+
+  session.state = "DANISMAN_LEAD_SECIMI";
+  session.danismanLeadListesi = acikLeadler.map((l) => l.id);
+
   // Durum artik tek ("Açık"), o yuzden ikon olarak durum yerine hatirlatma
   // kurulu olup olmadigini gosteriyoruz - danisman icin daha faydali bir
   // sinyal (hangi musteride ne zaman tekrar aranmasi gerektigini hatirlatir).
+  // Yonetici gorunumunde ayrica hangi danismana ait oldugu da eklenir.
   const satirlar = acikLeadler.map((l) => {
     const ikon = l.hatirlatma ? "⏰" : "⚪";
-    return `${ikon} ${l.musteriAdi || l.telefon} (${l.urun})`;
+    const danismanEtiketi = yoneticiMi && l.danismanAdi ? ` - ${l.danismanAdi}` : "";
+    return `${ikon} ${l.musteriAdi || l.telefon} (${l.urun})${danismanEtiketi}`;
   });
 
-  await sendList(
-    from,
-    `Açık talepleriniz aşağıda, detay görmek istediğinizi seçin:`,
-    "Talep Seç",
-    satirlar
-  );
+  const baslikMetni =
+    yoneticiMi && tumAcikLeadler.length > 10
+      ? `Ekipte toplam ${tumAcikLeadler.length} açık iş var, en uzun süredir bekleyen 10 tanesi aşağıda (tamamı için panele bakabilirsiniz). Detay görmek istediğinizi seçin:`
+      : `Açık talepleriniz aşağıda, detay görmek istediğinizi seçin:`;
+
+  await sendList(from, baslikMetni, "Talep Seç", satirlar);
 }
 
 async function leadDetayGoster(from, session, lead) {
@@ -1099,10 +1128,19 @@ async function leadDetayGoster(from, session, lead) {
       }${lead.hatirlatma.basarisiz ? "\n⚠️ Bu hatırlatma WhatsApp üzerinden gönderilemedi, müşteriyi elle kontrol edin." : ""}`
     : "";
 
+  // Yonetici (Bahadır/Enbel) kendi isi olmayan bir talebe bakiyorsa, hangi
+  // danismana ait oldugunu burada da gorsun (liste satirinda zaten vardi,
+  // detayda da tekrar gorunmesi karisikligi onler).
+  const danismanSatiri =
+    YONETICI_NUMARALARI.includes(from) && lead.danismanNumarasi !== from && lead.danismanAdi
+      ? `👨‍💼 Danışman: ${lead.danismanAdi}\n`
+      : "";
+
   const detay =
     `👤 ${lead.musteriAdi || lead.telefon}\n` +
     `📦 ${lead.urun}\n` +
     `📞 ${lead.telefon}\n` +
+    danismanSatiri +
     `📊 Durum: ${lead.durum}\n\n` +
     `${lead.ozet || ""}` +
     notlarMetni +
