@@ -709,6 +709,38 @@ async function handleIncoming(from, message) {
     return;
   }
 
+  // 27.07.2026 eklendi: musteri bir sorunun ortasinda takilip kaldigini
+  // hissettiginde ("Menü", "Merhaba", "Geri al", "Baştan" gibi) en basa
+  // donmeyi/sifirlamayi bekliyor, ama bunlarin HICBIRI taninmiyordu - bot
+  // sadece o an bekledigi soruyu (orn. secenekli bir soruyu) oldugu gibi
+  // tekrar gonderiyordu (kullanicinin ekran goruntusuyle bildirdigi durum:
+  // "Sigortalanacak konut size mi ait, yoksa kiracı mısınız?" sorusunda
+  // "Merhaba"/"Menü"/"Geri al" yazinca soru degismeden ayni sekilde tekrar
+  // geliyordu). Asagidaki kelimelerden biri TEK BASINA (baska bir cevabin
+  // PARCASI degil, tam esit) yazilirsa oturumu sifirlayip musteriyi
+  // baslaYeniKonusma ile yeniden karsiliyoruz - bu musteri zaten biliniyorsa
+  // (ismi/KVKK onayi kalici profilde varsa) dogrudan urun secimine donuyor,
+  // bilinmiyorsa normal karsilama akisindan devam ediyor. NEW durumundayken
+  // zaten ayni fonksiyon cagriliyor oldugu icin (case "NEW"), tekrar
+  // tetiklememek adina sadece NEW DISI durumlarda calisiyor.
+  const SIFIRLAMA_KELIMELERI = [
+    "menu", // "menü" -> normalizeTr sonrasi
+    "ana menu",
+    "anamenu",
+    "anasayfa",
+    "bastan",
+    "yeniden basla",
+    "geri al",
+    "geri",
+    "merhaba",
+    "selam"
+  ];
+  if (session.state !== "NEW" && SIFIRLAMA_KELIMELERI.includes(normalizedUserText.trim())) {
+    resetSession(from);
+    await baslaYeniKonusma(from, getSession(from), userText);
+    return;
+  }
+
   // Musteri 1 saatten uzun sure sessiz kaldiktan sonra devam eden aktif bir
   // konusmaya geri donuyorsa, kaldigi soruyu tekrar sormadan once kisa bir
   // hatirlatma mesaji gonderelim (nereden devam ettigini hatirlamasi icin).
