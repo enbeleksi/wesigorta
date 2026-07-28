@@ -351,7 +351,18 @@ function hitapEt(a, ucuncuSahisMetni, ikinciSahisMetni) {
 // Iki ayri dosyada tutulmasinin sebebi dairesel require sorunundan kacinmak
 // (bkz. musteriSatisBaslat yorumu) - bu liste nadiren degistigi icin
 // senkron tutmak risk degil.
-const SATIS_TUM_DANISMAN_ISIMLERI = ["Enbel", "Seda", "Bahadır", "Fırat", "Yasemin", "Furkan", "Simge", "Tuğçe"];
+const SATIS_TUM_DANISMAN_ISIMLERI = [
+  "Enbel",
+  "Seda",
+  "Bahadır",
+  "Fırat",
+  "Yasemin",
+  "Furkan",
+  "Şevval",
+  "Nilşah",
+  "Simge",
+  "Tuğçe"
+];
 
 // BES basvurularinda (Yeni İş ve Aktarım) mail'e eklenen SABIT varsayilan fon
 // dagilimi (bkz. besOzetVerileriniHesapla yorumu - dinamik/guncel piyasaya

@@ -1,13 +1,15 @@
 const { getSession, resetSession } = require("./sessionStore");
 const { sendText, sendButtons, sendList, sendTemplate, mediaIndir } = require("./loggedWhatsapp");
 const { ruhsatFotografiAnalizEt } = require("./ruhsatAnaliz");
+const { proformaAnalizEt } = require("./proformaAnaliz");
 const { garantiEmekliligeGonder } = require("./eposta");
 const messageLog = require("./messageLog");
 const leadStore = require("./leadStore");
 const musteriProfilStore = require("./musteriProfilStore");
 const sozlukSSS = require("./sozlukSSS");
 const flows = require("./flows");
-const { adSoyadGecerliMi } = require("./validators");
+const { baskasiIcinMi, sehirAdiBul } = flows;
+const { adSoyadGecerliMi, tcKimlikGecerliMi, tarihGecerliMi, telefonGecerliMi } = require("./validators");
 const { gunSelamlamasi } = require("./gunSelamlama");
 
 // Enbel/Bahadır'in numaralari birden fazla yerde (guvenlik agi, not bildirimi,
@@ -29,7 +31,18 @@ function yeniTalepAksiyonHookAyarla(fn) {
   yeniTalepAksiyonHook = fn;
 }
 
-const PRODUCT_KEYS = Object.keys(flows);
+// 28.07.2026: flows.js artik urun tanimlarinin yaninda bazi yardimci
+// fonksiyonlari da (baskasiIcinMi, sehirAdiBul, saglikYetiskinMi) named
+// export olarak disariya aciyor (bkz. flows.js sonu) - Object.keys(flows)
+// SADECE bunlarla filtrelenmeden kullanilirsa, PRODUCT_KEYS/PRODUCT_LABELS bu
+// fonksiyonlari da "urunmuş gibi" ice alir (flows[k].label => undefined),
+// bu da urun secim listesinde undefined bir secenege ve matchOption'da
+// normalizeTr(undefined) hatasina yol acar. Bu yuzden SADECE gercekten bir
+// "questions" dizisine sahip (yani gercek bir urun tanimi olan) key'ler
+// aliniyor.
+const PRODUCT_KEYS = Object.keys(flows).filter(
+  (k) => flows[k] && typeof flows[k] === "object" && Array.isArray(flows[k].questions)
+);
 // Urun secim listesinde WhatsApp'in 24 karakter siniri oldugu icin, uzun urun
 // isimlerinde flows.js'deki kisa "menuLabel" kullanilir; yoksa tam "label" kullanilir.
 // Ozet/bildirim mesajlarinda ise her zaman tam "label" kullanilmaya devam eder.
@@ -167,16 +180,15 @@ async function startProductFlow(from, session, productKey, { skipIntro = false }
     session.answers.ad_soyad = session.name;
   }
 
-  // Musterinin KENDI T.C. kimlik numarasi (arac/ruhsat sahibi TC'si DEGIL -
-  // sadece question.kaliciProfilAlani === "tcKimlik" ile isaretli bare soru,
-  // bkz. flows.js ve musteriProfilStore.js'deki aciklamalar) daha once kalici
-  // profile kaydedilmisse, bu urunde de ayni tur soru varsa tekrar sormadan
-  // onceden dolduruyoruz.
-  const kaliciProfil = musteriProfilStore.profilGetir(from);
-  const tcKimlikSorusu = flow.questions.find((q) => q.kaliciProfilAlani === "tcKimlik");
-  if (kaliciProfil && kaliciProfil.tcKimlik && tcKimlikSorusu) {
-    session.answers[tcKimlikSorusu.id] = kaliciProfil.tcKimlik;
-  }
+  // NOT (28.07.2026): Musterinin KENDI T.C. kimlik numarasinin (kaliciProfilAlani
+  // === "tcKimlik" ile isaretli soru - su an SADECE Malpraktis'te var) kalici
+  // profilden onceden doldurulmasi ARTIK BURADA yapilmiyor - Malpraktis'e
+  // "hedef_kisi" ("kendiniz icin mi, baskasi icin mi") sorusu eklendigi icin,
+  // bu onceden-doldurma sadece "Kendim İçin" cevabi verildiginde anlamli
+  // (baskasi icinse FARKLI bir kisinin TC'si isteniyor, kendi kayitli TC'mizi
+  // oraya yazmak BUYUK bir hata olurdu). Bu yuzden bu doldurma artik ASKING
+  // case'inde "hedef_kisi" sorusu cevaplandigi anda, sadece "Kendim İçin"
+  // durumunda yapiliyor (bkz. asagida).
 
   session.questionIndex = nextValidIndex(flow, session.answers, 0);
   session.state = "ASKING";
@@ -293,6 +305,273 @@ function isimCevabiniTemizle(text) {
   return trimmed;
 }
 
+// --- Özel Sağlık/TSS "Ailem (Birden Fazla)" aile bireyleri toplama motoru
+// (28.07.2026 eklendi) ---
+// flows.js'teki sabit soru dizisi/skipIf mimarisi, calisma zamaninda
+// kullanicinin cevabina gore SINIRSIZ sayida tekrar eden bir soru grubunu
+// (kac cocuk oldugu onceden bilinmedigi icin) ifade edemiyor. Bu yuzden
+// flows.js'teki "aile_dongu" tipindeki TEK BIR soru, asagidaki fonksiyonlarla
+// yonetilen kendi ic durum makinesini kullaniyor (session.saglikAileAsama):
+// once (istege bagli) esin bilgilerini, sonra (istege bagli, sinirsiz
+// tekrarla, her seferinde "başka çocuk var mı" diye sorarak) her cocugun
+// bilgilerini topluyor. Toplanan herkes session.answers.saglik_kisiler
+// dizisine ekleniyor.
+//
+// ONEMLI (danisman modu notu): advisorEngine.js'deki "danisman musteri
+// adina yeni talep olusturuyor" akisi (DANISMAN_YENI_SORU) sadece "choice"
+// ve duz metin soru tiplerini biliyor - bu "aile_dongu" tipini (coklu_foto
+// tipinde de zaten var olan AYNI onceden var olan sinirlamayla) TANIMIYOR.
+// Bir danisman Ozel Saglik/TSS'de "Ailem (Birden Fazla)" secip musteri
+// adina yeni talep olusturmaya calisirsa bu adimda beklenmeyen bir davranis
+// olusabilir - bu, teslimat notunda ayrica belirtilmesi gereken bilinen bir
+// sinirlamadir.
+
+function karsiCinsiyet(cinsiyet) {
+  if (cinsiyet === "Kadın") return "Erkek";
+  if (cinsiyet === "Erkek") return "Kadın";
+  return null;
+}
+
+const SAGLIK_AILE_SORU_METNI = {
+  ES_SORULUYOR: "Eşinizi de poliçeye eklemek ister misiniz?",
+  ES_AD_SOYAD: "Eşinizin ismini ve soyismini paylaşır mısınız?",
+  ES_DOGUM_TARIHI: "Eşinizin doğum tarihini belirtir misiniz? (GG.AA.YYYY)",
+  ES_BOY_KILO: "Eşinizin boyunu ve kilosunu paylaşır mısınız? (Örn: 170 cm / 70 kg)",
+  ES_TELEFON: "Eşinizin cep telefonu numarasını paylaşır mısınız? 📱",
+  ES_MESLEK: "Eşinizin mesleğini paylaşır mısınız? 💼 Bazı meslek gruplarına özel indirimler uygulayabiliyoruz.",
+  COCUK_SORULUYOR_ILK: "Çocuğunuzu da poliçeye eklemek ister misiniz?",
+  COCUK_SORULUYOR_TEKRAR: "Başka bir çocuğunuzu da poliçeye eklemek ister misiniz?",
+  COCUK_AD_SOYAD: "Çocuğunuzun ismini ve soyismini paylaşır mısınız?",
+  COCUK_DOGUM_TARIHI: "Çocuğunuzun doğum tarihini belirtir misiniz? (GG.AA.YYYY)",
+  COCUK_CINSIYET: "Çocuğunuzun cinsiyeti nedir?",
+  COCUK_BOY_KILO: "Çocuğunuzun boyunu ve kilosunu paylaşır mısınız? (Örn: 120 cm / 25 kg)",
+  COCUK_TELEFON: "Çocuğunuz 18 yaşını doldurduğu için cep telefonu numarasını da paylaşır mısınız? 📱",
+  COCUK_MESLEK: "Çocuğunuz 18 yaşını doldurduğu için mesleğini de paylaşır mısınız? 💼"
+};
+
+async function saglikAileSorusunuSor(from, session) {
+  const asama = session.saglikAileAsama;
+  const metin = SAGLIK_AILE_SORU_METNI[asama];
+  if (asama === "ES_SORULUYOR" || asama === "COCUK_SORULUYOR_ILK" || asama === "COCUK_SORULUYOR_TEKRAR") {
+    await sendChoiceQuestion(from, metin, ["Evet", "Hayır"]);
+  } else if (asama === "COCUK_CINSIYET") {
+    await sendChoiceQuestion(from, metin, ["Kadın", "Erkek"]);
+  } else {
+    await sendText(from, metin);
+  }
+}
+
+// session.saglikAileGecici icinde toplanmakta olan kisiyi tamamlayip
+// session.answers.saglik_kisiler dizisine ekler, sonraki asamaya gecer -
+// esin ardindan HER ZAMAN "ilk çocuk" sorusuna, bir cocugun ardindan HER
+// ZAMAN "başka çocuk" sorusuna gecilir.
+function saglikKisiTamamla(session) {
+  if (!session.answers.saglik_kisiler) session.answers.saglik_kisiler = [];
+  const tamamlanan = session.saglikAileGecici;
+  session.answers.saglik_kisiler.push(tamamlanan);
+  session.saglikAileGecici = null;
+  session.saglikAileAsama = tamamlanan.tur === "Eş" ? "COCUK_SORULUYOR_ILK" : "COCUK_SORULUYOR_TEKRAR";
+}
+
+// Kullanicinin aile_dongu sirasindaki cevabini isler. Donus degeri: true ise
+// tum aile toplama sureci BITMISTIR (cagiran taraf bir sonraki flow sorusuna
+// gecebilir), false ise HALA DEVAM ETMEKTEDIR (bir sonraki alt-soru zaten bu
+// fonksiyon icinde gonderildi, cagiran tarafin baska bir sey yapmasina
+// gerek yok).
+async function saglikAileCevabiIsle(from, session, userText) {
+  const asama = session.saglikAileAsama;
+
+  const evetHayirSecimi = async () => {
+    const secilen = matchOption(userText, ["Evet", "Hayır"]);
+    if (!secilen) {
+      await saglikAileSorusunuSor(from, session);
+      return null;
+    }
+    return secilen;
+  };
+
+  if (asama === "ES_SORULUYOR") {
+    const secilen = await evetHayirSecimi();
+    if (!secilen) return false;
+    if (secilen === "Hayır") {
+      session.saglikAileAsama = "COCUK_SORULUYOR_ILK";
+    } else {
+      session.saglikAileGecici = { tur: "Eş" };
+      session.saglikAileAsama = "ES_AD_SOYAD";
+    }
+    await saglikAileSorusunuSor(from, session);
+    return false;
+  }
+
+  if (asama === "ES_AD_SOYAD") {
+    if (!adSoyadGecerliMi(userText)) {
+      await sendText(
+        from,
+        "Hmm, bunu bir isim-soyisim olarak anlayamadım 🙂 Lütfen eşinizin adını ve soyadını yazar mısınız?"
+      );
+      return false;
+    }
+    session.saglikAileGecici.adSoyad = isimCevabiniTemizle(userText);
+    // Turkiye'de evlilik karsi cinsler arasinda oldugu icin, musterinin kendi
+    // cinsiyeti biliniyorsa esin cinsiyeti otomatik cikarilir - ayrica
+    // sorulmaz (kullanicinin acik talebi). Ayni sekilde ikamet (il/ilce) de
+    // ayni hane oldugu icin tekrar sorulmaz.
+    session.saglikAileGecici.cinsiyet = karsiCinsiyet(session.answers.cinsiyet);
+    session.saglikAileGecici.ilIlce = session.answers.il_ilce;
+    session.saglikAileAsama = "ES_DOGUM_TARIHI";
+    await saglikAileSorusunuSor(from, session);
+    return false;
+  }
+
+  if (asama === "ES_DOGUM_TARIHI") {
+    if (!tarihGecerliMi(userText)) {
+      await sendText(from, "Lütfen tarihi GG.AA.YYYY formatında yazar mısınız? (Örn: 15.05.1990)");
+      return false;
+    }
+    session.saglikAileGecici.dogumTarihi = userText.trim();
+    session.saglikAileAsama = "ES_BOY_KILO";
+    await saglikAileSorusunuSor(from, session);
+    return false;
+  }
+
+  if (asama === "ES_BOY_KILO") {
+    session.saglikAileGecici.boyKilo = userText.trim();
+    // Es HER ZAMAN yetiskin kabul edilir - cep telefonu/meslek her zaman sorulur.
+    session.saglikAileAsama = "ES_TELEFON";
+    await saglikAileSorusunuSor(from, session);
+    return false;
+  }
+
+  if (asama === "ES_TELEFON") {
+    if (!telefonGecerliMi(userText)) {
+      await sendText(from, "Girilen numara geçerli görünmüyor, lütfen tekrar yazar mısınız? (Örn: 05551234567)");
+      return false;
+    }
+    session.saglikAileGecici.cepTelefonu = userText.trim();
+    session.saglikAileAsama = "ES_MESLEK";
+    await saglikAileSorusunuSor(from, session);
+    return false;
+  }
+
+  if (asama === "ES_MESLEK") {
+    session.saglikAileGecici.meslek = userText.trim();
+    saglikKisiTamamla(session);
+    await saglikAileSorusunuSor(from, session);
+    return false;
+  }
+
+  if (asama === "COCUK_SORULUYOR_ILK" || asama === "COCUK_SORULUYOR_TEKRAR") {
+    const secilen = await evetHayirSecimi();
+    if (!secilen) return false;
+    if (secilen === "Hayır") {
+      return true; // aile bireyleri toplama TAMAMEN bitti
+    }
+    session.saglikAileGecici = { tur: "Çocuk" };
+    session.saglikAileAsama = "COCUK_AD_SOYAD";
+    await saglikAileSorusunuSor(from, session);
+    return false;
+  }
+
+  if (asama === "COCUK_AD_SOYAD") {
+    if (!adSoyadGecerliMi(userText)) {
+      await sendText(
+        from,
+        "Hmm, bunu bir isim-soyisim olarak anlayamadım 🙂 Lütfen çocuğunuzun adını ve soyadını yazar mısınız?"
+      );
+      return false;
+    }
+    session.saglikAileGecici.adSoyad = isimCevabiniTemizle(userText);
+    // Cocugun ikamet bilgisi de ayni hane oldugu icin tekrar sorulmuyor -
+    // ama cinsiyeti ebeveynlerden CIKARILAMAZ, o yuzden ayrica sorulacak.
+    session.saglikAileGecici.ilIlce = session.answers.il_ilce;
+    session.saglikAileAsama = "COCUK_DOGUM_TARIHI";
+    await saglikAileSorusunuSor(from, session);
+    return false;
+  }
+
+  if (asama === "COCUK_DOGUM_TARIHI") {
+    if (!tarihGecerliMi(userText)) {
+      await sendText(from, "Lütfen tarihi GG.AA.YYYY formatında yazar mısınız? (Örn: 15.05.2015)");
+      return false;
+    }
+    session.saglikAileGecici.dogumTarihi = userText.trim();
+    session.saglikAileAsama = "COCUK_CINSIYET";
+    await saglikAileSorusunuSor(from, session);
+    return false;
+  }
+
+  if (asama === "COCUK_CINSIYET") {
+    const secilen = matchOption(userText, ["Kadın", "Erkek"]);
+    if (!secilen) {
+      await saglikAileSorusunuSor(from, session);
+      return false;
+    }
+    session.saglikAileGecici.cinsiyet = secilen;
+    session.saglikAileAsama = "COCUK_BOY_KILO";
+    await saglikAileSorusunuSor(from, session);
+    return false;
+  }
+
+  if (asama === "COCUK_BOY_KILO") {
+    session.saglikAileGecici.boyKilo = userText.trim();
+    // 18 yas alti cocuklarda cep telefonu/meslek istenmiyor (kullanicinin
+    // acik talebi) - flows.js'teki saglikYetiskinMi ile AYNI mantik.
+    if (flows.saglikYetiskinMi(session.saglikAileGecici.dogumTarihi)) {
+      session.saglikAileAsama = "COCUK_TELEFON";
+      await saglikAileSorusunuSor(from, session);
+    } else {
+      saglikKisiTamamla(session);
+      await saglikAileSorusunuSor(from, session);
+    }
+    return false;
+  }
+
+  if (asama === "COCUK_TELEFON") {
+    if (!telefonGecerliMi(userText)) {
+      await sendText(from, "Girilen numara geçerli görünmüyor, lütfen tekrar yazar mısınız? (Örn: 05551234567)");
+      return false;
+    }
+    session.saglikAileGecici.cepTelefonu = userText.trim();
+    session.saglikAileAsama = "COCUK_MESLEK";
+    await saglikAileSorusunuSor(from, session);
+    return false;
+  }
+
+  if (asama === "COCUK_MESLEK") {
+    session.saglikAileGecici.meslek = userText.trim();
+    saglikKisiTamamla(session);
+    await saglikAileSorusunuSor(from, session);
+    return false;
+  }
+
+  // Beklenmeyen bir durum icin guvenlik agi - aile toplamayi bitmis sayip devam et.
+  return true;
+}
+
+// aile_dongu ile toplanan kisileri (session.answers.saglik_kisiler) kisa,
+// okunakli satirlara cevirir - kompaktDetayOlustur ve finishFlow'daki
+// agentMessage/customerSummary tarafindan kullanilir. flow.questions'ta
+// karsiligi olmayan bir alan oldugu icin genel soru-bazli ozet mekanizmasi
+// bunu OTOMATIK GOSTERMEZ, bu yuzden ayri bir fonksiyon gerekiyor.
+function saglikKisileriOzetSatirlariOlustur(session) {
+  const kisiler = session.answers.saglik_kisiler;
+  if (!Array.isArray(kisiler) || kisiler.length === 0) return [];
+  let cocukSayaci = 0;
+  return kisiler.map((k) => {
+    const etiket = k.tur === "Çocuk" ? `Çocuk ${++cocukSayaci}` : k.tur;
+    const parcalar = [
+      k.adSoyad,
+      k.dogumTarihi ? `D.Tarihi: ${k.dogumTarihi}` : null,
+      k.cinsiyet,
+      k.boyKilo,
+      k.ilIlce ? `İkamet: ${k.ilIlce}` : null,
+      k.cepTelefonu ? `Tel: ${k.cepTelefonu}` : null,
+      k.meslek ? `Meslek: ${k.meslek}` : null
+    ].filter(Boolean);
+    return `${etiket}: ${parcalar.join(", ")}`;
+  });
+}
+
 // Acente bildirimlerinde soru metni yerine kullanilan kisa, okunakli etiketler.
 // Tam soru cumlesi ("Binanın toplam kaç kattan oluştuğunu belirtir misiniz?")
 // yerine kisa etiket ("Kat Sayısı") kullanmak, tek bir sablon degiskenine
@@ -313,8 +592,13 @@ const ID_KISA_ETIKET = {
   tc_kimlik: "TC",
   kasko_durumu: "Kasko Durumu",
   arac_fotograflari: "Araç Fotoğrafları",
+  arac_sifir_mi: "Araç Sıfır mı",
+  marka: "Marka",
+  model: "Model",
+  motor_no: "Motor No",
+  sasi_no: "Şasi No",
   plaka: "Plaka",
-  ruhsat_seri_no: "Ruhsat Seri No",
+  kasko_talebi: "Kasko Talebi",
   sehir: "Şehir",
   kimin_icin: "Kimin İçin",
   dogum_tarihi: "Doğum Tarihi",
@@ -334,7 +618,11 @@ const ID_KISA_ETIKET = {
   tescil_tarihi: "Tescil Tarihi",
   asistan_mi: "Asistan mı",
   sigorta_ettiren_turu: "Sigorta Ettiren",
-  saglik_kurumu: "Sağlık Kurumu"
+  saglik_kurumu: "Sağlık Kurumu",
+  cep_telefonu: "Cep Telefonu",
+  sigorta_ettiren_kendisi_mi: "Sigorta Ettiren Kendisi mi",
+  sigorta_ettiren_ad_soyad: "Sigorta Ettiren",
+  sigorta_ettiren_dogum_tarihi: "Sigorta Ettiren Doğum Tarihi"
 };
 
 // Danismana WhatsApp sablonu icinde (tek bir degiskene sigacak sekilde) gonderilecek
@@ -350,12 +638,44 @@ function cevabiMetneCevir(deger) {
   return deger;
 }
 
+// "belge" tipi sorular (proforma_belgesi/ruhsat_belgesi) musteriye/danismana
+// ozette AYRI bir satir olarak gosterilmez - o sorunun kendi cevabi (answers[q.id])
+// sadece akisi ilerletmek icin true olarak isaretleniyor (bkz. conversationEngine.js
+// media islemcisi), gercek bilgi zaten marka/model/motor_no/sasi_no/tc_kimlik/plaka
+// gibi AYRI alanlara yaziliyor ve onlar zaten kendi soru satirlarinda gorunuyor.
+// "aile_dongu" tipi soru da (Özel Sağlık/TSS'de "Ailem (Birden Fazla)") ayni
+// sebeple haric tutulur - gercek bilgi session.answers.saglik_kisiler
+// dizisinde, ayrica saglikKisileriOzetSatirlariOlustur ile ozetleniyor.
+function ozetlenecekSorular(flow, answers) {
+  return flow.questions.filter(
+    (q) => q.type !== "belge" && q.type !== "aile_dongu" && !(q.skipIf && q.skipIf(answers))
+  );
+}
+
+// 28.07.2026 eklendi: Trafik/Kasko'da proforma/ruhsat OCR'inden gelen ama
+// musteriye AYRICA bir soru olarak sorulmayan (flow.questions'ta karsiligi
+// olmayan) ek referans bilgiler - danisman/Enbel/Bahadır bildirimlerinde
+// gorunsun diye kompaktDetayOlustur ve finishFlow'daki agentMessage'a
+// EKLENIYOR (musteriye gonderilen ozete DAHIL EDILMIYOR).
+const ARAC_EK_BILGI_ETIKETLERI = {
+  ruhsat_ad_soyad: "Ruhsattaki İsim",
+  proforma_ad_soyad: "Proformadaki İsim",
+  model_yili: "Model Yılı"
+};
+function aracEkBilgiSatirlariOlustur(session, ayrac) {
+  return Object.entries(ARAC_EK_BILGI_ETIKETLERI)
+    .filter(([id]) => session.answers[id])
+    .map(([id, etiket]) => `${etiket}${ayrac}${session.answers[id]}`);
+}
+
 function kompaktDetayOlustur(flow, session, telefon) {
-  const askedQuestions = flow.questions.filter((q) => !(q.skipIf && q.skipIf(session.answers)));
+  const askedQuestions = ozetlenecekSorular(flow, session.answers);
   const alanlar = askedQuestions.map((q) => {
     const etiket = ID_KISA_ETIKET[q.id] || q.id;
     return `${etiket}: ${cevabiMetneCevir(session.answers[q.id])}`;
   });
+  alanlar.push(...aracEkBilgiSatirlariOlustur(session, ": "));
+  alanlar.push(...saglikKisileriOzetSatirlariOlustur(session));
   return (
     `${flow.label} • Müşteri: ${session.name} • Telefon: ${telefon} • ` + alanlar.join(" • ")
   );
@@ -491,14 +811,13 @@ async function handleIncoming(from, message) {
   }
 
   // Musteri bir fotograf/belge gonderdiyse: su anki soru "coklu_foto" tipindeyse
-  // (orn. kasko arac fotograflari) ya da "fotoIleAlinabilir" ozelligine
-  // sahipse (orn. ruhsat seri no) kabul edilir, aksi halde nazikce "su an
-  // fotograf beklemiyoruz" denir.
+  // (orn. kasko arac fotograflari) ya da "belge" tipindeyse (orn. Trafik/Kasko'da
+  // proforma/ruhsat) kabul edilir, aksi halde nazikce "su an fotograf beklemiyoruz" denir.
   if (message.type === "media") {
     const flow = session.product ? flows[session.product] : null;
     const currentQuestion = session.state === "ASKING" && flow ? flow.questions[session.questionIndex] : null;
-    const fotoKabulEdilir =
-      currentQuestion && (currentQuestion.type === "coklu_foto" || currentQuestion.fotoIleAlinabilir);
+    const belgeSorusuMu = currentQuestion && currentQuestion.type === "belge";
+    const fotoKabulEdilir = currentQuestion && (currentQuestion.type === "coklu_foto" || belgeSorusuMu);
 
     if (!fotoKabulEdilir) {
       await sendText(
@@ -508,49 +827,93 @@ async function handleIncoming(from, message) {
       return;
     }
 
-    if (!message.mimeType || !message.mimeType.startsWith("image/")) {
-      await sendText(from, "Lütfen sadece fotoğraf gönderin (belge/PDF değil).");
+    // "belge" tipi sorularda (proforma) hem fotograf hem PDF kabul edilir -
+    // diger foto sorularinda (coklu_foto) eskisi gibi sadece fotograf gecerlidir.
+    const mimeGecerliMi =
+      message.mimeType &&
+      (message.mimeType.startsWith("image/") || (belgeSorusuMu && message.mimeType === "application/pdf"));
+    if (!mimeGecerliMi) {
+      await sendText(
+        from,
+        belgeSorusuMu
+          ? "Lütfen belgeyi fotoğraf ya da PDF olarak gönderir misiniz? 🙏"
+          : "Lütfen sadece fotoğraf gönderin (belge/PDF değil)."
+      );
       return;
     }
 
-    // --- Ruhsat foto analizi (Claude gorsel analiziyle seri no okuma) ---
-    if (currentQuestion.fotoIleAlinabilir) {
+    // --- Belge analizi (proforma / ruhsat - Claude gorsel/dokuman analiziyle
+    // marka/model/motor no/sasi no/TC kimlik/(varsa)plaka TEK SEFERDE okunur) ---
+    if (belgeSorusuMu) {
       try {
         const { buffer, mimeType } = await mediaIndir(message.mediaId);
-        await sendText(from, "Fotoğrafınızı inceliyorum, bir saniye... 🔍");
-        const sonuc = await ruhsatFotografiAnalizEt(buffer, message.mimeType || mimeType);
+        const gercekMime = message.mimeType || mimeType;
+        await sendText(from, "Belgenizi inceliyorum, bir saniye... 🔍");
 
-        if (sonuc.okunabilir && sonuc.seriNo && currentQuestion.validate(sonuc.seriNo)) {
-          session.answers[currentQuestion.id] = sonuc.seriNo.toUpperCase();
-          // Fotografin kendisini de saklayip, talep olusunca belge olarak ekleyecegiz
-          // (danisman gerekirse gozle de kontrol edebilsin diye).
+        if (currentQuestion.belgeTuru === "proforma") {
+          const sonuc = await proformaAnalizEt(buffer, gercekMime);
+          if (!sonuc.okunabilir) {
+            await sendText(
+              from,
+              `Belgeyi net okuyamadım 😕 ${sonuc.aciklama || ""}\n\n` +
+                "Proforma belgenizi (fotoğraf ya da PDF olarak) tekrar gönderir misiniz?"
+            );
+            return;
+          }
+          if (sonuc.marka) session.answers.marka = sonuc.marka;
+          if (sonuc.model) session.answers.model = sonuc.model;
+          if (sonuc.motorNo) session.answers.motor_no = sonuc.motorNo;
+          if (sonuc.sasiNo) session.answers.sasi_no = sonuc.sasiNo;
+          if (sonuc.modelYili) session.answers.model_yili = sonuc.modelYili;
+          if (sonuc.adSoyad) session.answers.proforma_ad_soyad = sonuc.adSoyad;
+          if (sonuc.tcKimlik && tcKimlikGecerliMi(sonuc.tcKimlik)) session.answers.tc_kimlik = sonuc.tcKimlik;
+          if (sonuc.plaka) session.answers.plaka = sonuc.plaka;
+
           if (!session.ekBelgeler) session.ekBelgeler = [];
           session.ekBelgeler.push({
-            dosyaAdi: "ruhsat.jpg",
-            mimeType: message.mimeType || mimeType,
+            dosyaAdi: gercekMime === "application/pdf" ? "proforma.pdf" : "proforma.jpg",
+            mimeType: gercekMime,
             veriBase64: buffer.toString("base64")
           });
-          await sendText(from, `Ruhsat seri numaranızı *${sonuc.seriNo.toUpperCase()}* olarak okudum ✅`);
-          session.questionIndex = nextValidIndex(flow, session.answers, session.questionIndex + 1);
-          if (session.questionIndex >= flow.questions.length) {
-            await finishFlow(from, session);
-          } else {
-            await askCurrentQuestion(from, session);
-          }
+          await sendText(from, "Proforma belgenizi inceledim, teşekkürler ✅");
         } else {
-          await sendText(
-            from,
-            `Fotoğrafı net okuyamadım 😕 ${sonuc.aciklama || ""}\n\n` +
-              "Ruhsatın sağ alt köşesindeki seri numarasının tamamı görünecek şekilde, iyi ışıkta tekrar bir " +
-              "fotoğraf çeker misiniz? İsterseniz seri numarasını yazarak da girebilirsiniz."
-          );
+          const sonuc = await ruhsatFotografiAnalizEt(buffer, gercekMime);
+          if (!sonuc.okunabilir) {
+            await sendText(
+              from,
+              `Ruhsatı net okuyamadım 😕 ${sonuc.aciklama || ""}\n\n` +
+                "Lütfen tüm bilgilerin net göründüğü, iyi ışıkta bir fotoğraf çeker misiniz?"
+            );
+            return;
+          }
+          if (sonuc.plaka) session.answers.plaka = sonuc.plaka;
+          if (sonuc.marka) session.answers.marka = sonuc.marka;
+          if (sonuc.model) session.answers.model = sonuc.model;
+          if (sonuc.motorNo) session.answers.motor_no = sonuc.motorNo;
+          if (sonuc.sasiNo) session.answers.sasi_no = sonuc.sasiNo;
+          if (sonuc.adSoyad) session.answers.ruhsat_ad_soyad = sonuc.adSoyad;
+          if (sonuc.tcKimlik && tcKimlikGecerliMi(sonuc.tcKimlik)) session.answers.tc_kimlik = sonuc.tcKimlik;
+
+          if (!session.ekBelgeler) session.ekBelgeler = [];
+          session.ekBelgeler.push({ dosyaAdi: "ruhsat.jpg", mimeType: gercekMime, veriBase64: buffer.toString("base64") });
+          await sendText(from, "Ruhsat fotoğrafınızı inceledim, teşekkürler ✅");
+        }
+
+        // Soru cevaplanmis sayilsin diye isaretliyoruz (gercek veri yukarida
+        // ayri alanlara - marka/model/motor_no/sasi_no/tc_kimlik/plaka - zaten
+        // yazildi; bu true degeri sadece ozette "belge" sorusunun kendisinin
+        // GORUNMEMESI icin ozetlenecekSorular tarafindan zaten filtreleniyor).
+        session.answers[currentQuestion.id] = true;
+
+        session.questionIndex = nextValidIndex(flow, session.answers, session.questionIndex + 1);
+        if (session.questionIndex >= flow.questions.length) {
+          await finishFlow(from, session);
+        } else {
+          await askCurrentQuestion(from, session);
         }
       } catch (err) {
-        console.error("Ruhsat foto analizi hatasi:", err?.response?.data || err.message);
-        await sendText(
-          from,
-          "Fotoğrafı analiz ederken bir sorun oluştu 🙏 Lütfen tekrar deneyin, ya da seri numarasını yazarak girebilirsiniz."
-        );
+        console.error("Belge analizi hatasi:", err?.response?.data || err.message);
+        await sendText(from, "Belgeyi analiz ederken bir sorun oluştu 🙏 Lütfen tekrar gönderir misiniz?");
       }
       return;
     }
@@ -879,6 +1242,24 @@ async function handleIncoming(from, message) {
         break;
       }
 
+      // "Ailem (Birden Fazla)" secilen Özel Sağlık/TSS akışında devreye giren
+      // esin/cocuklarin bilgilerini toplama dongusu - tamamen kendi ic durum
+      // makinesini (session.saglikAileAsama) yoneten saglikAileCevabiIsle
+      // fonksiyonuna devrediliyor (bkz. o fonksiyonun ustundeki genis yorum).
+      if (currentQuestion.type === "aile_dongu") {
+        const tamamlandiMi = await saglikAileCevabiIsle(from, session, userText);
+        if (tamamlandiMi) {
+          session.answers[currentQuestion.id] = true;
+          session.questionIndex = nextValidIndex(flow, session.answers, session.questionIndex + 1);
+          if (session.questionIndex >= flow.questions.length) {
+            await finishFlow(from, session);
+          } else {
+            await askCurrentQuestion(from, session);
+          }
+        }
+        break;
+      }
+
       // Secenekli soruda gecerli bir secenek secildi mi kontrol et (esnek eslestirme ile)
       if (currentQuestion.type === "choice") {
         const validOption = matchOption(userText, currentQuestion.options);
@@ -887,6 +1268,73 @@ async function handleIncoming(from, message) {
           break;
         }
         session.answers[currentQuestion.id] = validOption;
+
+        // 28.07.2026 eklendi: DASK/Konut/Malpraktis'teki "hedef_kisi" ("kendiniz
+        // için mi, başkası için mi") sorusuna "Kendim İçin" cevabi verildiyse,
+        // musterinin ismi zaten biliniyor (session.name - "Merhaba" akisinda
+        // alinmisti) - flows.js'teki bu urunlerin "ad_soyad" sorusunda artik
+        // sameAsAccountHolder KULLANILMIYOR (cunku hangi ismin gecerli oldugu
+        // hedef_kisi cevabina bagli, flow BASLARKEN henuz bilinmiyordu) - onun
+        // yerine burada, hedef_kisi cevaplanir cevaplanmaz, "Kendim İçin"
+        // ise ad_soyad'i simdi dolduruyoruz ki nextValidIndex bu soruyu
+        // (zaten cevaplanmis sayarak) atlasin. "Başkası İçin" ise hicbir sey
+        // yapmiyoruz, ad_soyad sorusu normal sekilde (o kisinin ismini
+        // isteyerek) sorulacak.
+        if (currentQuestion.id === "hedef_kisi" && validOption === "Kendim İçin" && session.name) {
+          session.answers.ad_soyad = session.name;
+
+          // 28.07.2026: "Kendim İçin" ise VE bu urunde kaliciProfilAlani ===
+          // "tcKimlik" ile isaretli bir soru varsa (su an sadece Malpraktis'te),
+          // musterinin daha once kaydedilmis T.C. kimlik numarasini simdi
+          // onceden dolduruyoruz ki tekrar sorulmasin. "Başkası İçin" durumunda
+          // BU KISIM HIC CALISMAZ (yukaridaki if kosulu "Kendim İçin"e
+          // ozel) - baskasi icin her zaman TC yeniden sorulur, kendi kayitli
+          // TC'mizi baskasina yazma hatasi bu sayede engellenmis olur.
+          const flow = flows[session.product];
+          const kaliciProfil = musteriProfilStore.profilGetir(from);
+          const tcKimlikSorusu = flow && flow.questions.find((q) => q.kaliciProfilAlani === "tcKimlik");
+          if (kaliciProfil && kaliciProfil.tcKimlik && tcKimlikSorusu) {
+            session.answers[tcKimlikSorusu.id] = kaliciProfil.tcKimlik;
+          }
+        }
+
+        // 28.07.2026 eklendi: Özel Sağlık/TSS'te "kimin_icin" sorusuna "Kendim"
+        // ya da "Ailem (Birden Fazla)" cevabi verildiyse (her iki durumda da
+        // ilk sigortalanacak kisi musterinin KENDISIDIR), ismi zaten
+        // biliniyor - "sigortalanacak kişi kendisiyse müşteriye yeniden isim
+        // soyisim sormaya gerek yok" (kullanicinin acik talebi). "Eşim"/
+        // "Çocuğum" durumunda bu blok calismaz, ad_soyad sorusu normal
+        // sekilde (o kisinin ismini isteyerek) sorulur.
+        if (
+          currentQuestion.id === "kimin_icin" &&
+          (validOption === "Kendim" || validOption === "Ailem (Birden Fazla)") &&
+          session.name
+        ) {
+          session.answers.ad_soyad = session.name;
+        }
+
+        // 28.07.2026 eklendi: "sigorta ettiren siz mi olacaksınız" sorusuna
+        // "Evet" cevabi verildiyse VE ilk sigortalanan kisi zaten musterinin
+        // kendisiyse (kimin_icin === Kendim/Ailem - yani dogum_tarihi zaten
+        // musterinin KENDI dogum tarihidir), "kendi kendini sigorta
+        // ettirecekse tc doğum tarihini zaten bir kere sorarız" (kullanicinin
+        // acik talebi) - dogum tarihi tekrar sorulmadan kopyalanir, ayrica
+        // kalici profilde TC varsa o da onceden doldurulur. "Eşim"/"Çocuğum"
+        // tek basina secildiyse musterinin KENDI dogum tarihi hic
+        // sorulmadigindan (sigortalanan kisi baskasi) bu kisayol
+        // UYGULANMAZ - sigorta ettirenin (musterinin kendisinin) dogum
+        // tarihi ve TC'si bu durumda normal sekilde/fresh sorulur.
+        if (currentQuestion.id === "sigorta_ettiren_kendisi_mi" && validOption === "Evet") {
+          const kendiBilgisiBilinior =
+            session.answers.kimin_icin === "Kendim" || session.answers.kimin_icin === "Ailem (Birden Fazla)";
+          if (kendiBilgisiBilinior) {
+            session.answers.sigorta_ettiren_dogum_tarihi = session.answers.dogum_tarihi;
+            const kaliciProfil = musteriProfilStore.profilGetir(from);
+            if (kaliciProfil && kaliciProfil.tcKimlik) {
+              session.answers.tc_kimlik = kaliciProfil.tcKimlik;
+            }
+          }
+        }
       } else {
         // Serbest metin sorularinda bir dogrulama fonksiyonu tanimliysa
         // (orn. TC kimlik no, tarih, plaka, ya da onceki cevaba bagli bir kontrol
@@ -909,8 +1357,33 @@ async function handleIncoming(from, message) {
         // sahibi TC'si DEGIL - bkz. flows.js/musteriProfilStore.js'deki
         // kaliciProfilAlani aciklamalari) bare soru cevaplandiysa, kalici
         // profile kaydediyoruz ki bir daha hicbir urunde tekrar sorulmasin.
-        if (currentQuestion.kaliciProfilAlani === "tcKimlik") {
+        // ONEMLI (28.07.2026): "Başkası İçin" durumunda burada girilen TC
+        // musterinin KENDI TC'si DEGIL, sigortalanan baska birinin TC'sidir -
+        // bu durumda ASLA musteriProfilStore'a (bu telefon numarasinin kendi
+        // profiline) kaydetmiyoruz, aksi halde bir dahaki sefere musteri
+        // KENDI adina bir sey yaptirmak istediginde yanlislikla baskasinin
+        // TC'si onceden doldurulmus olurdu. AYNI riskin Özel Sağlık/TSS
+        // esdegeri: "sigorta ettiren" musterinin KENDISI degilse (sigorta_ettiren_kendisi_mi
+        // === "Hayır"), buradaki TC musterinin degil BASKA bir "sigorta
+        // ettiren"in TC'sidir - o durumda da ASLA kaydetmiyoruz.
+        if (
+          currentQuestion.kaliciProfilAlani === "tcKimlik" &&
+          !baskasiIcinMi(session.answers) &&
+          session.answers.sigorta_ettiren_kendisi_mi !== "Hayır"
+        ) {
           musteriProfilStore.profilGuncelle(from, { tcKimlik: session.answers[currentQuestion.id] });
+        }
+
+        // 28.07.2026: Malpraktis'te "bağlı olduğunuz sağlık kurumu" cevabinda
+        // zaten bir sehir adi geciyorsa (orn. "İstanbul Üniversitesi Hastanesi"),
+        // ayrica sehir sormaya gerek yok - cevaptan sehri otomatik cikarip
+        // dolduruyoruz ki SEHIR_SORU (nextValidIndex'in "already answered"
+        // kontrolu sayesinde) otomatik atlansin.
+        if (currentQuestion.id === "saglik_kurumu") {
+          const bulunanSehir = sehirAdiBul(session.answers.saglik_kurumu);
+          if (bulunanSehir) {
+            session.answers.sehir = bulunanSehir;
+          }
         }
       }
 
@@ -978,6 +1451,17 @@ async function handleIncoming(from, message) {
 async function askCurrentQuestion(from, session) {
   const flow = flows[session.product];
   const q = flow.questions[session.questionIndex];
+
+  // "aile_dongu" tipi soruya ILK defa gelindiginde ic durum makinesini
+  // baslatiyoruz (bkz. saglikAileSorusunuSor/saglikAileCevabiIsle'in
+  // ustundeki genis yorum) - gercek metin/secenekler bu ozel fonksiyondan
+  // gonderiliyor, q.text/q.options burada KULLANILMAZ.
+  if (q.type === "aile_dongu") {
+    if (!session.saglikAileAsama) session.saglikAileAsama = "ES_SORULUYOR";
+    await saglikAileSorusunuSor(from, session);
+    return;
+  }
+
   const text = resolveText(q, session.answers);
   if (q.type === "choice") {
     await sendChoiceQuestion(from, text, q.options);
@@ -1009,7 +1493,9 @@ async function finishFlow(from, session) {
   messageLog.setName(from, session.name);
 
   // Atlanan (skipIf ile gecilen) sorular hic cevaplanmadigi icin ozete dahil edilmez.
-  const askedQuestions = flow.questions.filter((q) => !(q.skipIf && q.skipIf(session.answers)));
+  // "belge" tipi sorular da (proforma_belgesi/ruhsat_belgesi) haric tutulur -
+  // bkz. ozetlenecekSorular yorumu.
+  const askedQuestions = ozetlenecekSorular(flow, session.answers);
   const summaryLines = askedQuestions.map((q) => {
     const questionText = resolveText(q, session.answers);
     return `- ${questionText.replace(/\?$/, "")}: ${cevabiMetneCevir(session.answers[q.id])}`;
@@ -1021,10 +1507,17 @@ async function finishFlow(from, session) {
       ? `${session.name.trim().split(/\s+/)[0]} Hocam`
       : session.name;
 
+  // Özel Sağlık/TSS'te "Ailem (Birden Fazla)" ile toplanan eş/çocuk bilgileri
+  // (session.answers.saglik_kisiler) flow.questions'ta karsiligi olmadigi
+  // icin summaryLines'a dahil DEGIL - musteriye kendi ozetinde de (kendi
+  // ailesi oldugu icin sakincasi yok) gorunsun diye ayrica ekleniyor.
+  const saglikKisiSatirlari = saglikKisileriOzetSatirlariOlustur(session).map((satir) => `- ${satir}`);
+
   const customerSummary =
     `Teşekkürler ${hitapIsmi}! ${flow.label} talebiniz için gerekli bilgileri aldık. ` +
     `Ekibimiz en kısa sürede sizinle iletişime geçip teklifinizi iletecek. 🙏\n\n` +
-    `Özet:\n${summaryLines.join("\n")}`;
+    `Özet:\n${summaryLines.join("\n")}` +
+    (saglikKisiSatirlari.length ? "\n" + saglikKisiSatirlari.join("\n") : "");
 
   await sendText(from, customerSummary);
 
@@ -1043,6 +1536,11 @@ async function finishFlow(from, session) {
   // hangi danismanin ilgili oldugunu tek bakista goremiyordu.
   const belirtilenDanismanAdi =
     session.answers.danisman_gorustu_mu === "Evet" ? session.answers.danisman_adi || null : null;
+  // Trafik/Kasko'da proforma/ruhsat OCR'inden gelen ama musteriye ayrica
+  // sorulmayan referans bilgiler (orn. ruhsattaki isim musterinin verdigi
+  // isimden farkliysa) sadece bu ekip bildirimine ekleniyor, musteriye
+  // gonderilen customerSummary'ye DAHIL EDILMIYOR.
+  const aracEkBilgiSatirlari = aracEkBilgiSatirlariOlustur(session, ": ").map((satir) => `- ${satir}`);
   const agentMessage =
     `\u{1F4CB} Yeni iş talebi geldi\n` +
     `Müşteri: ${session.name}\n` +
@@ -1050,7 +1548,9 @@ async function finishFlow(from, session) {
     `Ürün: ${flow.label}\n` +
     (belirtilenDanismanAdi ? `Danışman: ${belirtilenDanismanAdi}\n` : "") +
     `\n` +
-    summaryLines.join("\n");
+    summaryLines.join("\n") +
+    (aracEkBilgiSatirlari.length ? "\n" + aracEkBilgiSatirlari.join("\n") : "") +
+    (saglikKisiSatirlari.length ? "\n" + saglikKisiSatirlari.join("\n") : "");
   const kompaktDetay = kompaktDetayOlustur(flow, session, from);
   const bildirilecekNumaralar = guvenlikAgiNumaralari(flow, agentNumber);
 

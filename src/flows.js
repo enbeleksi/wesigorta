@@ -37,12 +37,30 @@ const {
   pozitifSayiMi,
   yilGecerliMi,
   plakaGecerliMi,
-  ruhsatSeriNoGecerliMi
+  telefonGecerliMi,
+  tarihiMsYap
 } = require("./validators");
+// 28.07.2026 eklendi: rastgele bir musteri/ucuncu-sahis ismine "'ın/'in/'un/'ün"
+// (tamlayan) ya da "'a/'e" (yonelme) eki eklerken artik sabit bir ek yerine
+// ismin gercek son unlusune gore dogru eki hesaplayan kucuk gramer modulu
+// kullaniliyor - bkz. turkceGramer.js'teki genis yorum (neden bagimsiz bir npm
+// paketi degil de burada yazildigi dahil).
+const { tamlayanEkiUygula, yonelmeEkiUygula } = require("./turkceGramer");
 
 const MESLEK_SORU = {
   id: "meslek",
-  text: "Mesleğinizi paylaşır mısınız? 💼 Bazı meslek gruplarına özel indirimler uygulayabiliyoruz, bu yüzden soruyoruz 😊",
+  // 28.07.2026: DASK/Konut'ta "başkası için" secilmisse meslek de o kisi
+  // uzerinden soruluyor (bkz. asagida kisiyeGoreMetin) - Trafik/Kasko gibi
+  // hedef_kisi kavrami OLMAYAN urunlerde answers.hedef_kisi hic set
+  // edilmeyecegi icin kisiyeGoreMetin dogal olarak ikinci sahis metnine duser,
+  // bu urunlerde davranis DEGISMEZ.
+  text: (answers) =>
+    kisiyeGoreMetin(
+      answers,
+      "Mesleğinizi paylaşır mısınız? 💼 Bazı meslek gruplarına özel indirimler uygulayabiliyoruz, bu yüzden soruyoruz 😊",
+      (isim) =>
+        `${tamlayanEkiUygula(isim)} mesleğini paylaşır mısınız? 💼 Bazı meslek gruplarına özel indirimler uygulayabiliyoruz, bu yüzden soruyoruz 😊`
+    ),
   danismanText:
     "Sigortalının mesleğini paylaşır mısınız? 💼 Bazı meslek gruplarına özel indirimler uygulayabiliyoruz.",
   type: "text"
@@ -59,52 +77,356 @@ const MESLEK_SORU_SON = {
 const MESLEK_SORU_UCUNCU_SAHIS = {
   id: "meslek",
   text: "Sigortalanacak kişinin mesleğini söyler misiniz? 💼 Bazı meslek gruplarına özel indirimler uygulayabiliyoruz, bu yüzden soruyoruz 😊",
-  type: "text"
+  type: "text",
+  // 28.07.2026: Ozel Saglik/TSS'de kullanicinin talebi geregi - 18 yas alti
+  // cocuklarda meslek bilgisi istenmiyor. Bu sabit SADECE bu iki urunde
+  // kullanildigi icin skipIf'i buraya (genel tanima) eklemek guvenli.
+  skipIf: (answers) => !saglikYetiskinMi(answers.dogum_tarihi)
 };
+
+// --- Özel Sağlık/TSS yeniden tasarim yardimcilari (28.07.2026 eklendi) ---
+// dogumTarihi GG.AA.YYYY formatinda gecerli bir tarihse yasini hesaplayip 18
+// ve uzeri mi diye bakar (cep telefonu/meslek sorulari SADECE yetiskinlerden
+// isteniyor). Tarih ayristirilamiyorsa (beklenmeyen bir durum) guvenli
+// tarafta kalip yetiskin kabul eder - soru gereksiz yere atlanmasin diye.
+function saglikYetiskinMi(dogumTarihi) {
+  const ms = tarihiMsYap(dogumTarihi);
+  if (ms === null) return true;
+  const yasYil = (Date.now() - ms) / (365.25 * 24 * 60 * 60 * 1000);
+  return yasYil >= 18;
+}
+
+// Ozel Saglik/TSS'de "kimin_icin" cevabina gore (Kendim/Eşim/Çocuğum/Ailem)
+// soru metnini secer. "Kendim" ve "Ailem (Birden Fazla)" AYNI davranir, cunku
+// "Ailem" durumunda bu STATIK sorular (ad_soyad/dogum_tarihi/cinsiyet/boy_kilo/
+// il_ilce/cep_telefonu/meslek) HER ZAMAN musterinin KENDI bilgilerini soruyor -
+// esin ve cocuklarin bilgileri AYRI bir mekanizmayla (asagidaki "aile_dongu"
+// tipi soru, bkz. conversationEngine.js) toplanıyor.
+function saglikKisiyeGoreMetin(answers, kendimMetni, esinMetni, cocugunMetni) {
+  if (answers.kimin_icin === "Eşim") return esinMetni;
+  if (answers.kimin_icin === "Çocuğum") return cocugunMetni;
+  return kendimMetni;
+}
+
+const CEP_TELEFONU_SORU_SAGLIK = {
+  id: "cep_telefonu",
+  text: (answers) =>
+    saglikKisiyeGoreMetin(
+      answers,
+      "Cep telefonu numaranızı paylaşır mısınız? 📱",
+      "Eşinizin cep telefonu numarasını paylaşır mısınız? 📱",
+      "Çocuğunuzun cep telefonu numarasını paylaşır mısınız? 📱"
+    ),
+  danismanText: "Sigortalının cep telefonu numarasını paylaşır mısınız?",
+  type: "text",
+  validate: telefonGecerliMi,
+  validationError: "Girilen numara geçerli görünmüyor, lütfen tekrar yazar mısınız? (Örn: 05551234567)",
+  // Kullanicinin talebi geregi: 18 yas alti cocuklardan cep telefonu istenmiyor.
+  skipIf: (answers) => !saglikYetiskinMi(answers.dogum_tarihi)
+};
+
+// "Ailem (Birden Fazla)" secildiginde, musterinin KENDI bilgilerinden sonra
+// devreye giren, esin (istege bagli) ve SINIRSIZ SAYIDA cocugun bilgilerini
+// toplayan ozel soru tipi. Gercek soru-cevap dongusu tamamen
+// conversationEngine.js'teki saglikAileSorusunuSor/saglikAileCevabiIsle
+// fonksiyonlarinda yonetiliyor (bkz. o dosyadaki genis yorum) - buradaki
+// "text" alani sadece guvenlik agi/danisman-modu icin bir yer tutucudur,
+// musteriye ASLA bu haliyle gosterilmez.
+const AILE_BIREYLERI_DONGUSU_SORUSU = {
+  id: "aile_bireyleri",
+  text: "Eşinizi ve çocuklarınızı da poliçeye eklemek ister misiniz?",
+  danismanText: "Sigortalıyla birlikte poliçeye eklenecek eş/çocuk var mı?",
+  type: "aile_dongu",
+  skipIf: (answers) => answers.kimin_icin !== "Ailem (Birden Fazla)"
+};
+
+const SIGORTA_ETTIREN_KENDISI_MI_SORU = {
+  id: "sigorta_ettiren_kendisi_mi",
+  text:
+    "Bu arada, sigorta ettiren (poliçenin sahibi/ödeyicisi) siz mi olacaksınız? 💰 Sigorta ettiren olan kişi, " +
+    "ödediği primler için vergi avantajından yararlanabiliyor - bu yüzden bu bilgiyi ayrıca soruyoruz.",
+  danismanText: "Sigorta ettiren (poliçenin sahibi/ödeyicisi) sigortalının kendisi mi olacak?",
+  type: "choice",
+  options: ["Evet", "Hayır"]
+};
+
+const SIGORTA_ETTIREN_AD_SOYAD_SORU = {
+  id: "sigorta_ettiren_ad_soyad",
+  text: "Sigorta ettirenin ismini ve soyismini paylaşır mısınız?",
+  danismanText: "Sigorta ettirenin ismini ve soyismini paylaşır mısınız?",
+  type: "text",
+  skipIf: (answers) => answers.sigorta_ettiren_kendisi_mi !== "Hayır"
+};
+
+// Sigorta ettiren kendisiyse (Evet) VE musterinin kendi dogum tarihi zaten
+// biliniyorsa (kimin_icin === Kendim/Ailem - yani yukarida zaten bir kere
+// soruldu), conversationEngine.js bu soruyu OTOMATIK dolduruyor (tekrar
+// sorulmuyor - kullanicinin acik talebi: "kendi kendini sigorta ettirecekse
+// tc doğum tarihini zaten bir kere sorarız"). Diger tum durumlarda normal
+// sekilde sorulur.
+const SIGORTA_ETTIREN_DOGUM_TARIHI_SORU = {
+  id: "sigorta_ettiren_dogum_tarihi",
+  text: (answers) =>
+    answers.sigorta_ettiren_kendisi_mi === "Hayır"
+      ? "Sigorta ettirenin doğum tarihini paylaşır mısınız? (GG.AA.YYYY)"
+      : "Doğum tarihinizi paylaşır mısınız? (GG.AA.YYYY)",
+  danismanText: "Sigorta ettirenin doğum tarihini paylaşır mısınız? (GG.AA.YYYY)",
+  type: "text",
+  validate: tarihGecerliMi,
+  validationError: "Lütfen tarihi GG.AA.YYYY formatında yazar mısınız? (Örn: 15.05.1990)"
+};
+
+// TC kimlik artik ACIKCA "sigorta ettiren"e ait - sigortalanan kisiden farkli
+// olabilir (orn. baba cocugunu sigortalatiyor ama primi kendisi odeyip vergi
+// avantajindan kendisi yararlaniyor). kaliciProfilAlani ile isaretlendigi icin
+// conversationEngine.js bunu musterinin kalici profiline kaydediyor - AMA
+// SADECE sigorta ettiren gercekten musterinin kendisiyse (bkz.
+// conversationEngine.js'deki ek kontrol, DASK/Konut/Malpraktis'teki
+// baskasiIcinMi kontrolunun saglik urunlerindeki esdegeri).
+const SIGORTA_ETTIREN_TC_KIMLIK_SORU = {
+  id: "tc_kimlik",
+  text: (answers) =>
+    answers.sigorta_ettiren_kendisi_mi === "Hayır"
+      ? "Teklifinizi hazırlayabilmemiz için son olarak sigorta ettirenin T.C. kimlik numarasına ihtiyacımız var. Bu bilgi sadece teklif hazırlığı amacıyla kullanılacak ve güvenle saklanacaktır."
+      : "Teklifinizi hazırlayabilmemiz için son olarak T.C. kimlik numaranıza ihtiyacımız var. Bu bilgi sadece teklif hazırlığı amacıyla kullanılacak ve güvenle saklanacaktır.",
+  danismanText:
+    "Teklifi hazırlayabilmemiz için son olarak sigorta ettirenin T.C. kimlik numarasına ihtiyacımız var. Bu bilgi sadece teklif hazırlığı amacıyla kullanılacak ve güvenle saklanacaktır.",
+  type: "text",
+  validate: tcKimlikGecerliMi,
+  validationError:
+    "Girdiğiniz T.C. kimlik numarası geçerli görünmüyor, lütfen 11 haneli olarak tekrar yazar mısınız?",
+  kaliciProfilAlani: "tcKimlik"
+};
+
+// ozel_saglik ve tss TAMAMEN ayni soru dizisini kullaniyor (sadece
+// urun etiketi/danisman numarasi farkli) - kopya/kayma riskini onlemek icin
+// TEK bir fonksiyondan uretiliyor, her cagirimda TAZE bir dizi donduruluyor.
+function saglikUrunuSorulari() {
+  return [
+    ...DANISMAN_SORULARI,
+    {
+      id: "kimin_icin",
+      text: "Kimin için sigorta yaptırmak istiyorsunuz?",
+      type: "choice",
+      options: ["Kendim", "Eşim", "Çocuğum", "Ailem (Birden Fazla)"],
+      danismandaGizle: true
+    },
+    {
+      id: "ad_soyad",
+      text: (answers) =>
+        saglikKisiyeGoreMetin(
+          answers,
+          "İsim ve soyisminizi paylaşır mısınız?",
+          "Eşinizin ismini ve soyismini paylaşır mısınız?",
+          "Çocuğunuzun ismini ve soyismini paylaşır mısınız?"
+        ),
+      type: "text"
+      // NOT: "Kendim" ve "Ailem (Birden Fazla)" durumunda bu soru
+      // conversationEngine.js'deki ozel bir kanca ile OTOMATIK dolduruluyor
+      // (musterinin ismi zaten biliniyor - kullanicinin acik talebi:
+      // "sigortalanacak kişi kendisiyse müşteriye yeniden isim soyisim
+      // sormaya gerek yok"), bu yuzden burada skipIf'e gerek YOK -
+      // nextValidIndex'teki "already answered" kontrolu otomatik atliyor.
+    },
+    {
+      id: "dogum_tarihi",
+      text: (answers) =>
+        saglikKisiyeGoreMetin(
+          answers,
+          "Doğum tarihinizi belirtir misiniz? (GG.AA.YYYY)",
+          "Eşinizin doğum tarihini belirtir misiniz? (GG.AA.YYYY)",
+          "Çocuğunuzun doğum tarihini belirtir misiniz? (GG.AA.YYYY)"
+        ),
+      danismanText: "Doğum tarihini belirtir misiniz? (GG.AA.YYYY)",
+      type: "text",
+      validate: tarihGecerliMi,
+      validationError: "Lütfen tarihi GG.AA.YYYY formatında yazar mısınız? (Örn: 15.05.1990)"
+    },
+    {
+      id: "cinsiyet",
+      text: (answers) =>
+        saglikKisiyeGoreMetin(answers, "Cinsiyetiniz nedir?", "Eşinizin cinsiyeti nedir?", "Çocuğunuzun cinsiyeti nedir?"),
+      danismanText: "Sigortalanacak kişinin cinsiyeti nedir?",
+      type: "choice",
+      options: ["Kadın", "Erkek"]
+    },
+    {
+      id: "boy_kilo",
+      text: (answers) =>
+        saglikKisiyeGoreMetin(
+          answers,
+          "Boyunuzu ve kilonuzu paylaşır mısınız? (Örn: 170 cm / 70 kg)",
+          "Eşinizin boyunu ve kilosunu paylaşır mısınız? (Örn: 170 cm / 70 kg)",
+          "Çocuğunuzun boyunu ve kilosunu paylaşır mısınız? (Örn: 120 cm / 25 kg)"
+        ),
+      danismanText: "Boyunu ve kilosunu paylaşır mısınız? (Örn: 170 cm / 70 kg)",
+      type: "text"
+    },
+    {
+      id: "il_ilce",
+      text: (answers) =>
+        saglikKisiyeGoreMetin(
+          answers,
+          "İkamet ettiğiniz il ve ilçeyi belirtir misiniz? (Örn: İstanbul / Kadıköy)",
+          "Eşinizin ikamet ettiği il ve ilçeyi belirtir misiniz? (Örn: İstanbul / Kadıköy)",
+          "Çocuğunuzun ikamet ettiği il ve ilçeyi belirtir misiniz? (Örn: İstanbul / Kadıköy)"
+        ),
+      danismanText: "İkamet ettiği il ve ilçeyi belirtir misiniz? (Örn: İstanbul / Kadıköy)",
+      type: "text"
+    },
+    { ...CEP_TELEFONU_SORU_SAGLIK },
+    { ...MESLEK_SORU_UCUNCU_SAHIS },
+    { ...AILE_BIREYLERI_DONGUSU_SORUSU },
+    { ...SIGORTA_ETTIREN_KENDISI_MI_SORU },
+    { ...SIGORTA_ETTIREN_AD_SOYAD_SORU },
+    { ...SIGORTA_ETTIREN_DOGUM_TARIHI_SORU },
+    { ...SIGORTA_ETTIREN_TC_KIMLIK_SORU }
+  ];
+}
 
 const TC_KIMLIK_SORU = {
   id: "tc_kimlik",
-  text: "Son olarak T.C. kimlik numaranızı yazar mısınız?",
+  // 28.07.2026: Malpraktis'te "başkası için" durumunda hedef kisinin T.C.
+  // kimlik numarasi isteniyor - diger urunlerde (hedef_kisi hic set
+  // edilmedigi icin) davranis degismiyor.
+  text: (answers) =>
+    kisiyeGoreMetin(
+      answers,
+      "Son olarak T.C. kimlik numaranızı yazar mısınız?",
+      (isim) => `Son olarak ${tamlayanEkiUygula(isim)} T.C. kimlik numarasını yazar mısınız?`
+    ),
   danismanText: "Son olarak sigortalının T.C. kimlik numarasını yazar mısınız?",
   type: "text",
   validate: tcKimlikGecerliMi,
   validationError:
     "Girdiğiniz T.C. kimlik numarası geçerli görünmüyor, lütfen 11 haneli olarak tekrar yazar mısınız?",
-  // Bu soru ACIKCA musterinin KENDI T.C. kimligini soruyor (RUHSAT_SAHIBI_TC_SORU'nun
-  // aksine - orada arac/ruhsat baskasina ait olabilir). Bu yuzden SADECE burada
+  // Bu soru ACIKCA musterinin KENDI T.C. kimligini soruyor (Trafik/Kasko'daki
+  // TC_KIMLIK_ISIMLE_SORU'nun aksine - orada arac/ruhsat baskasina ait olabilir,
+  // ya da proforma uzerindeki isim ustunden soruluyor olabilir). Bu yuzden SADECE burada
   // kaliciProfilAlani isaretlenir: conversationEngine.js bu cevabi musterinin
   // kalici profiline (musteriProfilStore) kaydedip, bir sonraki HER urunde
   // otomatik doldurur, boylece ayni musteriye TC'si bir daha sorulmaz.
   kaliciProfilAlani: "tcKimlik"
 };
 
-// Trafik/Kasko'da sorulan TC, hesap sahibinin degil ruhsat sahibinin TC'sidir
-// (arac baskasi adina kayitli olabilir, poliçe ruhsat sahibi uzerinden hazirlanir).
-// Zaten 3. sahis oldugu icin danisman modunda da aynen kullanilabilir.
-const RUHSAT_SAHIBI_TC_SORU = {
+// --- Trafik/Kasko yeniden tasarim yardimcilari (28.07.2026 eklendi) ---
+// Eskiden Trafik/Kasko'da plaka + ruhsat seri no (yazarak ya da tek-alanlik
+// foto analiziyle) + ruhsat sahibinin TC'si AYRI AYRI sorulurdu. Artik once
+// aracin sifir mi ikinci el mi oldugu soruluyor, sonrasinda TEK BIR belge
+// (sifirsa proforma, ikinci else ruhsat fotografi) istenip Claude'un gorsel
+// analiziyle plaka/marka/model/motor no/sasi no/TC kimlik gibi TUM bilgiler
+// TEK SEFERDE okunuyor (bkz. ruhsatAnaliz.js / proformaAnaliz.js). Asagidaki
+// "fallback" sorular, OCR bir alani net okuyamadiysa (orn. gorsel bulanik,
+// proformada TC kimlik hic yer almiyor) devreye giriyor - nextValidIndex'teki
+// "already answered" kontrolu sayesinde, OCR ile zaten dolan bir alan icin bu
+// sorular otomatik atlaniyor, sadece EKSIK kalan alanlar icin gosteriliyor.
+const ARAC_SIFIR_MI_SORU = {
+  id: "arac_sifir_mi",
+  text: "Aracınız sıfır mı, yoksa ikinci el mi?",
+  danismanText: "Sigortalının aracı sıfır mı, yoksa ikinci el mi?",
+  type: "choice",
+  options: ["Sıfır", "İkinci El"]
+};
+
+// type: "belge" - musteriden bir belge (fotograf ya da PDF) istenen, Claude'un
+// gorsel/dokuman analiziyle OKUNAN yeni bir soru tipi. conversationEngine.js'deki
+// "media" mesaj islemcisinde ozel olarak ele alinir (bkz. o dosyadaki ilgili blok).
+// belgeTuru: "proforma" | "ruhsat" - hangi analiz fonksiyonunun (proformaAnalizEt /
+// ruhsatFotografiAnalizEt) cagrilacagini belirler.
+const PROFORMA_BELGESI_SORU = {
+  id: "proforma_belgesi",
+  text:
+    "Aracınız sıfır olduğu için bayiden aldığınız proforma belgesini paylaşır mısınız? Fotoğraf ya da PDF " +
+    "olarak gönderebilirsiniz, sizin için okuruz. 📄",
+  danismanText: "Sigortalının proforma belgesini (fotoğraf ya da PDF) paylaşır mısınız?",
+  type: "belge",
+  belgeTuru: "proforma",
+  skipIf: (answers) => answers.arac_sifir_mi !== "Sıfır"
+};
+
+const RUHSAT_BELGESI_SORU = {
+  id: "ruhsat_belgesi",
+  text:
+    "Aracınız ikinci el olduğu için ruhsatınızın fotoğrafını paylaşır mısınız? Tüm bilgilerin net okunabilmesi " +
+    "için iyi ışıkta, net bir fotoğraf çeker misiniz? 📸",
+  danismanText: "Sigortalının ruhsat fotoğrafını paylaşır mısınız?",
+  type: "belge",
+  belgeTuru: "ruhsat",
+  skipIf: (answers) => answers.arac_sifir_mi !== "İkinci El"
+};
+
+const MARKA_FALLBACK_SORU = {
+  id: "marka",
+  text: "Aracınızın markasını belirtir misiniz? (Belgeden bu bilgiyi net okuyamadım)",
+  danismanText: "Sigortalının aracının markasını belirtir misiniz?",
+  type: "text"
+};
+
+const MODEL_FALLBACK_SORU = {
+  id: "model",
+  text: "Aracınızın modelini belirtir misiniz? (Belgeden bu bilgiyi net okuyamadım)",
+  danismanText: "Sigortalının aracının modelini belirtir misiniz?",
+  type: "text"
+};
+
+const MOTOR_NO_FALLBACK_SORU = {
+  id: "motor_no",
+  text:
+    "Aracınızın motor numarasını belirtir misiniz? (Belgeden bu bilgiyi net okuyamadım - bazı ruhsatlarda bu " +
+    "alan boş olabilir, öyleyse 'yok' yazabilirsiniz)",
+  danismanText: "Sigortalının aracının motor numarasını belirtir misiniz? Yoksa 'yok' yazabilirsiniz.",
+  type: "text"
+};
+
+const SASI_NO_FALLBACK_SORU = {
+  id: "sasi_no",
+  text: "Aracınızın şasi numarasını belirtir misiniz? (Belgeden bu bilgiyi net okuyamadım)",
+  danismanText: "Sigortalının aracının şasi numarasını belirtir misiniz?",
+  type: "text"
+};
+
+// Sifir arac henuz tescil edilmedigi icin plakasi yoktur - bu soru SADECE
+// ikinci el arac icin, ruhsat OCR'i plakayi okuyamadiysa devreye girer.
+const PLAKA_FALLBACK_SORU = {
+  id: "plaka",
+  text: "Aracınızın plakasını belirtir misiniz? (Örn: 34 ABC 123) (Belgeden bu bilgiyi net okuyamadım)",
+  danismanText: "Sigortalının aracının plakasını belirtir misiniz? (Örn: 34 ABC 123)",
+  type: "text",
+  validate: plakaGecerliMi,
+  validationError: "Lütfen plakayı doğru formatta yazar mısınız? (Örn: 34 ABC 123)",
+  skipIf: (answers) => answers.arac_sifir_mi === "Sıfır"
+};
+
+// TC kimlik OCR ile (ruhsattan ya da bazen proformadan) otomotik okunuyor.
+// Bu soru sadece OCR bu alani bulamadiysa devreye giriyor - en sik proforma
+// belgelerinde (sifir arac musteri adina henuz tescillenmedigi icin proformada
+// TC kimlik yer almaz). Boyle bir durumda, belgede bir isim yakalanabildiyse
+// (proforma_ad_soyad) o isimle hitap ederiz, yakalanamadiysa musterinin kendi
+// ad_soyad cevabiyla.
+const TC_KIMLIK_ISIMLE_SORU = {
   id: "tc_kimlik",
-  text: "Son olarak ruhsat sahibinin T.C. kimlik numarasını yazar mısınız?",
+  text: (answers) => {
+    const isim = answers.proforma_ad_soyad || answers.ad_soyad;
+    return isim
+      ? `Son olarak ${tamlayanEkiUygula(isim)} T.C. kimlik numarasını yazar mısınız?`
+      : "Son olarak T.C. kimlik numaranızı yazar mısınız?";
+  },
+  danismanText: "Son olarak sigortalının T.C. kimlik numarasını yazar mısınız?",
   type: "text",
   validate: tcKimlikGecerliMi,
   validationError:
     "Girdiğiniz T.C. kimlik numarası geçerli görünmüyor, lütfen 11 haneli olarak tekrar yazar mısınız?"
 };
 
-// Ruhsat belge seri no, ruhsatin sag alt kosesinde yer alir; harflerle baslayip
-// rakamlarla devam eder (orn. "AE123456"). Metin zaten notr (kimseye ait "-nız"
-// eki yok), danisman modunda da aynen kullanilabilir.
-// fotoIleAlinabilir: true - musteri isterse yazmak yerine ruhsatin fotografini
-// gonderebilir, Claude'un gorsel analiziyle seri no otomatik okunur (bkz.
-// ruhsatAnaliz.js). Metinle cevaplama da her zaman calismaya devam eder.
-const RUHSAT_SERI_NO_SORU = {
-  id: "ruhsat_seri_no",
-  text:
-    "Ruhsat belge seri numarasını belirtir misiniz? (Ruhsatın sağ alt köşesinde yer alan, harflerle başlayıp rakamlarla devam eden seri numarasıdır. Örn: AE123456) İsterseniz yazmak yerine ruhsatın fotoğrafını da gönderebilirsiniz, sizin için okuruz. 📸",
-  type: "text",
-  validate: ruhsatSeriNoGecerliMi,
-  validationError:
-    "Lütfen ruhsat seri numarasını doğru formatta yazar mısınız? Harflerle başlayıp rakamlarla devam etmesi gerekiyor. (Örn: AE123456)",
-  fotoIleAlinabilir: true
+// Sadece Trafik'te sorulur (kullanicinin talebi): musteri trafik sigortasi
+// isterken capraz satis olarak Kasko teklifi de sorulur, cevap bildirimde
+// "Kasko Talebi: Evet/Hayır" olarak ayrica gosterilir (bkz. ID_KISA_ETIKET).
+const KASKO_TEKLIFI_SORUSU = {
+  id: "kasko_talebi",
+  text: "Bu arada, sizin için Kasko sigortası teklifi de hazırlamamızı ister misiniz?",
+  danismanText: "Sigortalı için Kasko sigortası teklifi de hazırlanmasını ister misiniz?",
+  type: "choice",
+  options: ["Evet", "Hayır"]
 };
 
 // Sehir cevabinda Turkce karakter farkliliklarini (ı/i, ş/s, ğ/g, ü/u, ö/o, ç/c)
@@ -174,9 +496,64 @@ function sehirTepkisiUret(cevap) {
   return null;
 }
 
+// 28.07.2026 eklendi: Malpraktis'te "bağlı olduğunuz sağlık kurumu" cevabinda
+// (orn. "İstanbul Üniversitesi Hastanesi") zaten bir sehir adi geciyorsa,
+// conversationEngine.js bu sehri otomatik cikarip ayrica SEHIR_SORU'yu atlar.
+// SEHIR_ESPRILERI ile ayni anahtar kumesini kullanir ama DUZGUN (Turkce
+// karakterli, sadece ilk harfi buyuk) sehir adini dondurur.
+const SEHIR_DUZGUN_ADI = {
+  istanbul: "İstanbul",
+  ankara: "Ankara",
+  izmir: "İzmir",
+  bursa: "Bursa",
+  antalya: "Antalya",
+  eskisehir: "Eskişehir",
+  adana: "Adana",
+  konya: "Konya",
+  gaziantep: "Gaziantep",
+  mersin: "Mersin",
+  kayseri: "Kayseri",
+  trabzon: "Trabzon",
+  samsun: "Samsun",
+  denizli: "Denizli",
+  sanliurfa: "Şanlıurfa",
+  urfa: "Şanlıurfa",
+  malatya: "Malatya",
+  van: "Van",
+  diyarbakir: "Diyarbakır",
+  sakarya: "Sakarya",
+  mugla: "Muğla",
+  kocaeli: "Kocaeli",
+  izmit: "Kocaeli",
+  balikesir: "Balıkesir",
+  manisa: "Manisa",
+  aydin: "Aydın",
+  tekirdag: "Tekirdağ",
+  canakkale: "Çanakkale",
+  erzurum: "Erzurum",
+  sivas: "Sivas",
+  elazig: "Elazığ",
+  rize: "Rize"
+};
+function sehirAdiBul(metin) {
+  const normalized = sehirIcinNormalize(metin || "");
+  for (const [anahtar, duzgunAd] of Object.entries(SEHIR_DUZGUN_ADI)) {
+    if (normalized.includes(anahtar)) return duzgunAd;
+  }
+  return null;
+}
+
 const SEHIR_SORU = {
   id: "sehir",
-  text: "Hangi şehirden bize ulaştığınızı öğrenebilir miyim?",
+  // 28.07.2026: Malpraktis'te "başkası için" durumunda hedef kisinin sehri
+  // soruluyor - diger urunlerde (hedef_kisi hic set edilmedigi icin) davranis
+  // degismiyor.
+  text: (answers) =>
+    kisiyeGoreMetin(
+      answers,
+      "Hangi şehirden bize ulaştığınızı öğrenebilir miyim?",
+      (isim) => `${isim} hangi şehirde bulunuyor, öğrenebilir miyim?`
+    ),
   danismanText: "Sigortalı hangi şehirde, öğrenebilir miyim?",
   type: "text",
   tepki: sehirTepkisiUret
@@ -195,7 +572,8 @@ const BINA_KAT_SAYISI_SORU = {
 
 const DAIRE_KATI_SORU = {
   id: "dairenin_bulundugu_kat",
-  text: "Peki daireniz kaçıncı katta?",
+  text: (answers) =>
+    kisiyeGoreMetin(answers, "Peki daireniz kaçıncı katta?", (isim) => `Peki ${tamlayanEkiUygula(isim)} dairesi kaçıncı katta?`),
   danismanText: "Peki sigortalının dairesi kaçıncı katta?",
   type: "text",
   validate: (deger, answers) => {
@@ -241,7 +619,10 @@ const DANISMANLAR = [
   { name: "Bahadır", number: "905380711711" },
   { name: "Fırat", number: "905527902616" },
   // 27.07.2026 eklendi (numara kullanicidan geldi: 0532 395 96 12 -> 90 ile normallestirildi).
-  { name: "Furkan", number: "905323959612" }
+  { name: "Furkan", number: "905323959612" },
+  // 28.07.2026 eklendi (numaralar kullanicidan geldi).
+  { name: "Şevval", number: "905539241775" },
+  { name: "Nilşah", number: "905411149895" }
   // Yasemin, Simge, Tuğçe - telefon numaralari henuz bizde yok.
 ];
 
@@ -256,6 +637,8 @@ const TUM_DANISMAN_ISIMLERI = [
   "Fırat",
   "Yasemin",
   "Furkan",
+  "Şevval",
+  "Nilşah",
   "Simge",
   "Tuğçe"
 ];
@@ -283,6 +666,75 @@ const DANISMAN_SORULARI = [
   }
 ];
 
+// --- "Kendiniz için mi, başkası için mi" ortak deseni (28.07.2026 eklendi) ---
+// DASK, Konut ve Malpraktis'te kullanilir: danisman sorularindan hemen sonra
+// musteriye policenin kendisi icin mi yoksa baska biri icin mi oldugu sorulur.
+// "Başkası İçin" derse sigortalanacak kisinin adi "ad_soyad" sorusuyla alinir
+// (bu soru normalde musterinin KENDI ismini sorardi, sameAsAccountHolder ile
+// otomatik doldurulurdu - o mekanizma bu urunlerde artik KULLANILMIYOR, cunku
+// hangi ismin gecerli oldugu hedef_kisi cevabina bagli; onun yerine
+// conversationEngine.js'deki ASKING case'inde "hedef_kisi" sorusu
+// cevaplandigi an, "Kendim İçin" ise session.name otomatik ad_soyad'a
+// yaziliyor - bkz. o dosyadaki ilgili yorum). "Başkası İçin" durumunda ise
+// sonraki TUM soru metinleri bu isim uzerinden (3. sahis) sorulur.
+function baskasiIcinMi(answers) {
+  return answers.hedef_kisi === "Başkası İçin";
+}
+// answers.ad_soyad - "Kendim İçin" ise session.name'den otomatik dolan, "Başkası
+// İçin" ise ayrica sorulan isim - sigortalanacak kisinin adini dondurur.
+// "Kendim İçin" durumunda null doner (metin uretiminde ikinci sahis kullanilsin diye).
+function hedefKisiAdi(answers) {
+  return baskasiIcinMi(answers) ? answers.ad_soyad || null : null;
+}
+// ikinciSahisMetni: "siz/sizin" formunda metin (kendisi icin gecerli).
+// ucuncuSahisUret: (isim) => isim uzerinden kurulmus metni donduren fonksiyon
+// (baskasi icin gecerli, sadece isim biliniyorsa cagrilir).
+function kisiyeGoreMetin(answers, ikinciSahisMetni, ucuncuSahisUret) {
+  const isim = hedefKisiAdi(answers);
+  return isim ? ucuncuSahisUret(isim) : ikinciSahisMetni;
+}
+// urunEtiketi: "DASK", "Konut sigortası" gibi - soru metnine gomulur.
+function hedefKisiSorusu(urunEtiketi) {
+  return {
+    id: "hedef_kisi",
+    text: `${urunEtiketi} poliçesini kendiniz için mi yaptıracaksınız yoksa bir başkası için mi?`,
+    type: "choice",
+    options: ["Kendim İçin", "Başkası İçin"],
+    // Bir danisman musterisi adina yeni talep olustururken bu ayrimi zaten
+    // kendisi biliyor (DANISMAN_SORULARI ile ayni mantik) - o akiste sorulmaz.
+    danismandaGizle: true
+  };
+}
+// ad_soyad sorusunun metni - hedef_kisi cevabina gore degisir. Not: bu soru
+// "Kendim İçin" durumunda conversationEngine.js tarafindan otomatik
+// doldurulup atlandigi icin, bu metin fiilen SADECE "Başkası İçin"
+// durumunda gosterilir.
+function hedefAdSoyadSorusuMetni(answers) {
+  return baskasiIcinMi(answers)
+    ? "Sigortayı kimin adına yaptıracaksınız? İsim ve soyismini paylaşır mısınız?"
+    : "İsim ve soyisminizi paylaşır mısınız?";
+}
+
+// --- Malpraktis'e ozel "hocam" hitap deseni (28.07.2026 eklendi) ---
+// Malpraktis'te musteri (hekim) her zaman ilk adi + "hocam" ile hitap
+// ediliyor. "Kendim İçin" durumunda ikinci sahis ("...mısınız?" gibi), "Başkası
+// İçin" durumunda ucuncu sahis ("...mı?" gibi) kullanilir - kullanicinin
+// verdigi ornek: "Ahmet hocam, asistan mısınız?" (kendi) / "Ahmet hocam
+// asistan mı?" (baskasi).
+function malpraktisIlkAd(answers) {
+  const isim = baskasiIcinMi(answers) ? hedefKisiAdi(answers) : answers.ad_soyad;
+  return isim ? isim.trim().split(/\s+/)[0] : null;
+}
+// ikinciSahisUret/ucuncuSahisUret: (hocaEtiketi) => "metin" - hocaEtiketi
+// "Ahmet hocam" formatinda gelir (isim bilinmiyorsa emniyetli bir fallback
+// olarak sadece "Hocam" kullanilir, pratikte bu durum olusmamali cunku isim
+// hedef_kisi/ASK_NAME asamasinda zaten alinmis oluyor).
+function malpraktisMetin(answers, ikinciSahisUret, ucuncuSahisUret) {
+  const ilkAd = malpraktisIlkAd(answers);
+  const hocaEtiketi = ilkAd ? `${ilkAd} hocam` : "Hocam";
+  return baskasiIcinMi(answers) ? ucuncuSahisUret(hocaEtiketi) : ikinciSahisUret(hocaEtiketi);
+}
+
 module.exports = {
   dask: {
     label: "DASK",
@@ -295,16 +747,21 @@ module.exports = {
       "Merhaba! 😊 Yeni eviniz hayırlı olsun, içinde huzur dolu günler geçirmenizi dileriz! 🏠💛 DASK poliçenizi hemen hazırlayabilmemiz için birkaç bilgi alalım, olur mu?",
     questions: [
       ...DANISMAN_SORULARI,
+      hedefKisiSorusu("DASK"),
       {
         id: "ad_soyad",
-        text: "İsim ve soyisminizi paylaşır mısınız?",
+        text: hedefAdSoyadSorusuMetni,
         danismanText: "Sigortalının ismini ve soyismini paylaşır mısınız?",
-        type: "text",
-        sameAsAccountHolder: true
+        type: "text"
       },
       {
         id: "mulkiyet_durumu",
-        text: "Sigortalanacak konut size mi ait, yoksa kiracı mısınız?",
+        text: (answers) =>
+          kisiyeGoreMetin(
+            answers,
+            "Sigortalanacak konut size mi ait, yoksa kiracı mısınız?",
+            (isim) => `Sigortalanacak konut ${yonelmeEkiUygula(isim)} mı ait, yoksa kendisi kiracı mı?`
+          ),
         danismanText: "Sigortalanacak konut sigortalıya mı ait, yoksa sigortalı kiracı mı?",
         type: "choice",
         options: ["Ev Sahibiyim", "Kiracıyım"]
@@ -329,10 +786,22 @@ module.exports = {
       { ...MESLEK_SORU },
       {
         id: "tc_kimlik",
-        text: (answers) =>
-          answers.mulkiyet_durumu === "Kiracıyım"
+        // 28.07.2026: "başkası için" ise ve kiraciysa mulk sahibi zaten
+        // sigortalanacak kisiden FARKLI, uculcu bir kisi oldugu icin isimsiz
+        // ("mülk sahibinin") kaliyor; ev sahibiyse dogrudan hedef kisinin
+        // ismiyle soruluyor - bkz. kullanicinin verdigi tam ornek.
+        text: (answers) => {
+          const kiraci = answers.mulkiyet_durumu === "Kiracıyım";
+          if (baskasiIcinMi(answers)) {
+            const isim = hedefKisiAdi(answers);
+            return kiraci
+              ? "Son olarak mülk sahibinin T.C. kimlik numarasını yazar mısınız? (Poliçeyi bu bilgiyle hazırlayacağız)"
+              : `Son olarak ${tamlayanEkiUygula(isim)} T.C. kimlik numarasını yazar mısınız? (Poliçeyi bu bilgiyle hazırlayacağız)`;
+          }
+          return kiraci
             ? "Son olarak ev sahibinin T.C. kimlik numarasını yazar mısınız? (Poliçeyi bu bilgiyle hazırlayacağız)"
-            : "Son olarak T.C. kimlik numaranızı yazar mısınız? (Poliçeyi bu bilgiyle hazırlayacağız)",
+            : "Son olarak T.C. kimlik numaranızı yazar mısınız? (Poliçeyi bu bilgiyle hazırlayacağız)";
+        },
         danismanText: (answers) =>
           answers.mulkiyet_durumu === "Kiracıyım"
             ? "Son olarak ev sahibinin T.C. kimlik numarasını yazar mısınız? (Poliçeyi bu bilgiyle hazırlayacağız)"
@@ -351,19 +820,24 @@ module.exports = {
     advisors: DANISMANLAR,
     questions: [
       ...DANISMAN_SORULARI,
+      hedefKisiSorusu("Konut sigortası"),
       {
         id: "ad_soyad",
-        text: "İsim ve soyisminizi paylaşır mısınız?",
+        text: hedefAdSoyadSorusuMetni,
         danismanText: "Sigortalının ismini ve soyismini paylaşır mısınız?",
-        type: "text",
-        sameAsAccountHolder: true
+        type: "text"
       },
       // DASK'in aksine Konut Sigortasi mutlaka ev sahibinin uzerine olmak
       // zorunda degil - kiraci da kendi uzerine yaptirabilir. Bu yuzden
       // "kiracı mısınız" yerine dogrudan police kimin uzerine sorusu soruyoruz.
       {
         id: "police_kimin_uzerine",
-        text: "Konut sigortasını kendi üzerinize mi, yoksa ev sahibinin üzerine mi yaptıracaksınız?",
+        text: (answers) =>
+          kisiyeGoreMetin(
+            answers,
+            "Konut sigortasını kendi üzerinize mi, yoksa ev sahibinin üzerine mi yaptıracaksınız?",
+            (isim) => `Konut sigortasını ${tamlayanEkiUygula(isim)} kendi üzerine mi, yoksa ev sahibinin üzerine mi yaptıracaksınız?`
+          ),
         danismanText: "Konut sigortası sigortalının kendi üzerine mi, yoksa ev sahibinin üzerine mi olacak?",
         type: "choice",
         options: ["Kendi Üzerime", "Ev Sahibinin Üzerine"]
@@ -388,10 +862,18 @@ module.exports = {
       { ...MESLEK_SORU },
       {
         id: "tc_kimlik",
-        text: (answers) =>
-          answers.police_kimin_uzerine === "Ev Sahibinin Üzerine"
+        text: (answers) => {
+          const evSahibininUzerine = answers.police_kimin_uzerine === "Ev Sahibinin Üzerine";
+          if (baskasiIcinMi(answers)) {
+            const isim = hedefKisiAdi(answers);
+            return evSahibininUzerine
+              ? "Son olarak ev sahibinin T.C. kimlik numarasını yazar mısınız? (Poliçeyi bu bilgiyle hazırlayacağız)"
+              : `Son olarak ${tamlayanEkiUygula(isim)} T.C. kimlik numarasını yazar mısınız? (Poliçeyi bu bilgiyle hazırlayacağız)`;
+          }
+          return evSahibininUzerine
             ? "Son olarak ev sahibinin T.C. kimlik numarasını yazar mısınız? (Poliçeyi bu bilgiyle hazırlayacağız)"
-            : "Son olarak T.C. kimlik numaranızı yazar mısınız? (Poliçeyi bu bilgiyle hazırlayacağız)",
+            : "Son olarak T.C. kimlik numaranızı yazar mısınız? (Poliçeyi bu bilgiyle hazırlayacağız)";
+        },
         danismanText: (answers) =>
           answers.police_kimin_uzerine === "Ev Sahibinin Üzerine"
             ? "Son olarak ev sahibinin T.C. kimlik numarasını yazar mısınız? (Poliçeyi bu bilgiyle hazırlayacağız)"
@@ -422,18 +904,21 @@ module.exports = {
         type: "text",
         sameAsAccountHolder: true
       },
-      {
-        id: "plaka",
-        text: "Aracınızın plakasını belirtir misiniz? (Örn: 34 ABC 123)",
-        danismanText: "Sigortalının aracının plakasını belirtir misiniz? (Örn: 34 ABC 123)",
-        type: "text",
-        validate: plakaGecerliMi,
-        validationError: "Lütfen plakayı doğru formatta yazar mısınız? (Örn: 34 ABC 123)"
-      },
-      { ...RUHSAT_SERI_NO_SORU },
+      { ...ARAC_SIFIR_MI_SORU },
+      { ...PROFORMA_BELGESI_SORU },
+      { ...RUHSAT_BELGESI_SORU },
+      { ...MARKA_FALLBACK_SORU },
+      { ...MODEL_FALLBACK_SORU },
+      { ...MOTOR_NO_FALLBACK_SORU },
+      { ...SASI_NO_FALLBACK_SORU },
+      { ...PLAKA_FALLBACK_SORU },
       { ...SEHIR_SORU },
       { ...MESLEK_SORU },
-      { ...RUHSAT_SAHIBI_TC_SORU }
+      { ...TC_KIMLIK_ISIMLE_SORU },
+      // Sadece Trafik'te: musteri trafik isterken capraz satis olarak kasko
+      // teklifi de sorulur (kullanicinin talebi) - Kasko'nun kendi urununde
+      // bu soru tekrar sorulmaz, anlamsiz olurdu.
+      { ...KASKO_TEKLIFI_SORUSU }
     ]
   },
 
@@ -452,15 +937,14 @@ module.exports = {
         type: "text",
         sameAsAccountHolder: true
       },
-      {
-        id: "plaka",
-        text: "Aracınızın plakasını belirtir misiniz? (Örn: 34 ABC 123)",
-        danismanText: "Sigortalının aracının plakasını belirtir misiniz? (Örn: 34 ABC 123)",
-        type: "text",
-        validate: plakaGecerliMi,
-        validationError: "Lütfen plakayı doğru formatta yazar mısınız? (Örn: 34 ABC 123)"
-      },
-      { ...RUHSAT_SERI_NO_SORU },
+      { ...ARAC_SIFIR_MI_SORU },
+      { ...PROFORMA_BELGESI_SORU },
+      { ...RUHSAT_BELGESI_SORU },
+      { ...MARKA_FALLBACK_SORU },
+      { ...MODEL_FALLBACK_SORU },
+      { ...MOTOR_NO_FALLBACK_SORU },
+      { ...SASI_NO_FALLBACK_SORU },
+      { ...PLAKA_FALLBACK_SORU },
       {
         id: "kasko_durumu",
         text: "Kaskonuzu düzenli olarak her yıl yeniliyor musunuz, yoksa bir süredir kaskosuz mu kullanıyorsunuz?",
@@ -472,7 +956,16 @@ module.exports = {
         // asagida da guncellendi). Bu deger sadece bu akis icinde
         // kullanildigi icin (Garanti Emeklilik gibi disaridan tam metin
         // bekleyen bir sistem yok) kisaltmak guvenli.
-        options: ["Düzenli Yeniliyorum", "Kaskosuzum"]
+        options: ["Düzenli Yeniliyorum", "Kaskosuzum"],
+        // 28.07.2026: kullanicinin acik talebi geregi ("İkisi bir arada
+        // kalsın") bu ESKI kaskonuz-var-mi/4-yonlu-foto akisi kaldirilmadi,
+        // yeni sifir/ikinci-el+proforma/ruhsat akisiyla BIRLIKTE korunuyor.
+        // Ancak sifir bir aracin (henuz hic kullanilmamis) "kaskosu" ya da
+        // gecmis kaza/hasar durumu olamayacagi icin bu soru SADECE ikinci el
+        // arac secildiyse soruluyor - bu, bu oturumda benim onerdigim ama
+        // kullaniciya ayrica teyit ettirilmemis bir yorum/varsayimdir, teslimat
+        // ozetinde ayrica belirtilmesi gerekir.
+        skipIf: (answers) => answers.arac_sifir_mi === "Sıfır"
       },
       {
         id: "arac_fotograflari",
@@ -486,11 +979,16 @@ module.exports = {
           "Aracın her yönünden (ön, arka, sağ, sol) birer fotoğraf, ayrıca ön camdan görünen şasi numarasının " +
           "fotoğrafını gönderir misiniz? Plaka fotoğraflarda net görünsün. Bitirince \"tamam\" yazmanız yeterli. 📸",
         type: "coklu_foto",
+        // kasko_durumu sifir arac icin zaten atlandigindan (yukarida), bu
+        // durumda answers.kasko_durumu undefined olur ve asagidaki kosul
+        // (undefined !== "Kaskosuzum") true doner - yani bu soru sifir arac
+        // icin de otomatik atlanmis olur, EK bir arac_sifir_mi kontrolune
+        // gerek yok.
         skipIf: (answers) => answers.kasko_durumu !== "Kaskosuzum"
       },
       { ...SEHIR_SORU },
       { ...MESLEK_SORU },
-      { ...RUHSAT_SAHIBI_TC_SORU }
+      { ...TC_KIMLIK_ISIMLE_SORU }
     ]
   },
 
@@ -498,48 +996,7 @@ module.exports = {
     label: "Özel Sağlık Sigortası",
     agentNumber: "905380711711", // Bahadır - elementer branş (Özel Sağlık)
     advisors: DANISMANLAR,
-    questions: [
-      ...DANISMAN_SORULARI,
-      {
-        id: "kimin_icin",
-        text: "Kimin için sigorta yaptırmak istiyorsunuz?",
-        type: "choice",
-        options: ["Kendim", "Eşim", "Çocuğum", "Ailem (Birden Fazla)"],
-        danismandaGizle: true
-      },
-      { id: "ad_soyad", text: "Sigortalanacak kişinin ismini ve soyismini paylaşır mısınız?", type: "text" },
-      {
-        id: "dogum_tarihi",
-        text: "Doğum tarihini belirtir misiniz? (GG.AA.YYYY)",
-        type: "text",
-        validate: tarihGecerliMi,
-        validationError: "Lütfen tarihi GG.AA.YYYY formatında yazar mısınız? (Örn: 15.05.1990)"
-      },
-      {
-        id: "cinsiyet",
-        text: "Sigortalanacak kişinin cinsiyeti nedir?",
-        type: "choice",
-        options: ["Kadın", "Erkek"]
-      },
-      { id: "boy_kilo", text: "Boyunu ve kilosunu paylaşır mısınız? (Örn: 170 cm / 70 kg)", type: "text" },
-      {
-        id: "il_ilce",
-        text: "İkamet ettiği il ve ilçeyi belirtir misiniz? (Örn: İstanbul / Kadıköy)",
-        type: "text"
-      },
-      { ...MESLEK_SORU_UCUNCU_SAHIS },
-      {
-        id: "tc_kimlik",
-        text:
-          "Teklifinizi hazırlayabilmemiz için son olarak T.C. kimlik numarasına ihtiyacımız var. Bu bilgi sadece teklif hazırlığı amacıyla kullanılacak ve güvenle saklanacaktır.",
-        danismanText:
-          "Teklifi hazırlayabilmemiz için son olarak sigortalının T.C. kimlik numarasına ihtiyacımız var. Bu bilgi sadece teklif hazırlığı amacıyla kullanılacak ve güvenle saklanacaktır.",
-        type: "text",
-        validate: tcKimlikGecerliMi,
-        validationError:
-          "Girdiğiniz T.C. kimlik numarası geçerli görünmüyor, lütfen 11 haneli olarak tekrar yazar mısınız?"
-      }
-    ]
+    questions: saglikUrunuSorulari()
   },
 
   tss: {
@@ -547,48 +1004,7 @@ module.exports = {
     menuLabel: "TSS (Tamamlayıcı Sig.)", // Urun secim listesinde WhatsApp'in 24 karakter siniri var
     agentNumber: "905380711711", // Bahadır - elementer branş (TSS)
     advisors: DANISMANLAR,
-    questions: [
-      ...DANISMAN_SORULARI,
-      {
-        id: "kimin_icin",
-        text: "Kimin için sigorta yaptırmak istiyorsunuz?",
-        type: "choice",
-        options: ["Kendim", "Eşim", "Çocuğum", "Ailem (Birden Fazla)"],
-        danismandaGizle: true
-      },
-      { id: "ad_soyad", text: "Sigortalanacak kişinin ismini ve soyismini paylaşır mısınız?", type: "text" },
-      {
-        id: "dogum_tarihi",
-        text: "Doğum tarihini belirtir misiniz? (GG.AA.YYYY)",
-        type: "text",
-        validate: tarihGecerliMi,
-        validationError: "Lütfen tarihi GG.AA.YYYY formatında yazar mısınız? (Örn: 15.05.1990)"
-      },
-      {
-        id: "cinsiyet",
-        text: "Sigortalanacak kişinin cinsiyeti nedir?",
-        type: "choice",
-        options: ["Kadın", "Erkek"]
-      },
-      { id: "boy_kilo", text: "Boyunu ve kilosunu paylaşır mısınız? (Örn: 170 cm / 70 kg)", type: "text" },
-      {
-        id: "il_ilce",
-        text: "İkamet ettiği il ve ilçeyi belirtir misiniz? (Örn: İstanbul / Kadıköy)",
-        type: "text"
-      },
-      { ...MESLEK_SORU_UCUNCU_SAHIS },
-      {
-        id: "tc_kimlik",
-        text:
-          "Teklifinizi hazırlayabilmemiz için son olarak T.C. kimlik numarasına ihtiyacımız var. Bu bilgi sadece teklif hazırlığı amacıyla kullanılacak ve güvenle saklanacaktır.",
-        danismanText:
-          "Teklifi hazırlayabilmemiz için son olarak sigortalının T.C. kimlik numarasına ihtiyacımız var. Bu bilgi sadece teklif hazırlığı amacıyla kullanılacak ve güvenle saklanacaktır.",
-        type: "text",
-        validate: tcKimlikGecerliMi,
-        validationError:
-          "Girdiğiniz T.C. kimlik numarası geçerli görünmüyor, lütfen 11 haneli olarak tekrar yazar mısınız?"
-      }
-    ]
+    questions: saglikUrunuSorulari()
   },
 
   hayat: {
@@ -700,23 +1116,33 @@ module.exports = {
     advisors: DANISMANLAR,
     questions: [
       ...DANISMAN_SORULARI,
+      hedefKisiSorusu("Hekim Sorumluluk Sigortası"),
       {
         id: "ad_soyad",
-        text: "İsim ve soyisminizi paylaşır mısınız?",
+        text: hedefAdSoyadSorusuMetni,
         danismanText: "Sigortalının ismini ve soyismini paylaşır mısınız?",
-        type: "text",
-        sameAsAccountHolder: true
+        type: "text"
       },
       {
         id: "asistan_mi",
-        text: "Asistan mısınız?",
+        text: (answers) =>
+          malpraktisMetin(
+            answers,
+            (hoca) => `${hoca}, asistan mısınız?`,
+            (hoca) => `${hoca} asistan mı?`
+          ),
         danismanText: "Sigortalı asistan mı?",
         type: "choice",
         options: ["Evet", "Hayır"]
       },
       {
         id: "uzman_mi",
-        text: "Uzman mısınız?",
+        text: (answers) =>
+          malpraktisMetin(
+            answers,
+            (hoca) => `${hoca}, uzman mısınız?`,
+            (hoca) => `${hoca} uzman mı?`
+          ),
         danismanText: "Sigortalı uzman mı?",
         type: "choice",
         options: ["Evet", "Hayır"],
@@ -725,7 +1151,12 @@ module.exports = {
       },
       {
         id: "uzmanlik_dali",
-        text: "Uzmanlık dalınızı belirtir misiniz?",
+        text: (answers) =>
+          malpraktisMetin(
+            answers,
+            (hoca) => `${hoca}, uzmanlık dalınızı belirtir misiniz?`,
+            (hoca) => `${hoca}ın uzmanlık dalını belirtir misiniz?`
+          ),
         danismanText: "Sigortalının uzmanlık dalını belirtir misiniz?",
         type: "text",
         // Asistan ya da uzmansa uzmanlik dali vardir; ikisi de degilse (tabip) sorulmaz.
@@ -733,14 +1164,24 @@ module.exports = {
       },
       {
         id: "hasta_bakiyor_mu",
-        text: "Aktif olarak hasta bakıyor musunuz?",
+        text: (answers) =>
+          malpraktisMetin(
+            answers,
+            (hoca) => `${hoca}, aktif olarak hasta bakıyor musunuz?`,
+            (hoca) => `${hoca} aktif olarak hasta bakıyor mu?`
+          ),
         danismanText: "Sigortalı aktif olarak hasta bakıyor mu?",
         type: "choice",
         options: ["Evet", "Hayır"]
       },
       {
         id: "yillik_hasta_sayisi",
-        text: "Yıllık hasta sayınızı yaklaşık olarak söyler misiniz?",
+        text: (answers) =>
+          malpraktisMetin(
+            answers,
+            (hoca) => `${hoca}, yıllık hasta sayınızı yaklaşık olarak söyler misiniz?`,
+            (hoca) => `${hoca}ın yıllık hasta sayısını yaklaşık olarak söyler misiniz?`
+          ),
         danismanText: "Sigortalının yıllık hasta sayısını yaklaşık olarak söyler misiniz?",
         type: "text",
         validate: pozitifSayiMi,
@@ -750,18 +1191,29 @@ module.exports = {
       },
       {
         id: "is_adresi",
-        text: "İş adresinizi (muayenehane/kurum) paylaşır mısınız?",
-        danismanText: "Sigortalının iş adresini (muayenehane/kurum) paylaşır mısınız?",
+        // 28.07.2026: kullanicinin istegiyle "(muayenehane/kurum)" ibaresi
+        // kaldirildi - sade bir "is adresi" sorusu yeterli.
+        text: (answers) =>
+          malpraktisMetin(
+            answers,
+            (hoca) => `${hoca}, iş adresinizi paylaşır mısınız?`,
+            (hoca) => `${hoca}ın iş adresini paylaşır mısınız?`
+          ),
+        danismanText: "Sigortalının iş adresini paylaşır mısınız?",
         type: "text"
       },
       {
         id: "tescil_no",
         // Tescil turu ayrica sorulmuyor, uzman olup olmadigina gore otomatik belirleniyor:
         // uzmansa "uzmanlık tescil", degilse (asistan ya da tabip) "diploma tescil".
-        text: (answers) =>
-          answers.uzman_mi === "Evet"
-            ? "Uzmanlık tescil numaranızı paylaşır mısınız?"
-            : "Diploma tescil numaranızı paylaşır mısınız?",
+        text: (answers) => {
+          const tescilTuru = answers.uzman_mi === "Evet" ? "Uzmanlık" : "Diploma";
+          return malpraktisMetin(
+            answers,
+            (hoca) => `${hoca}, ${tescilTuru.toLocaleLowerCase("tr")} tescil numaranızı paylaşır mısınız?`,
+            (hoca) => `${hoca}ın ${tescilTuru.toLocaleLowerCase("tr")} tescil numarasını paylaşır mısınız?`
+          );
+        },
         danismanText: (answers) =>
           answers.uzman_mi === "Evet"
             ? "Sigortalının uzmanlık tescil numarasını paylaşır mısınız?"
@@ -770,22 +1222,45 @@ module.exports = {
       },
       {
         id: "tescil_tarihi",
-        text: "Tescil tarihinizi belirtir misiniz? (GG.AA.YYYY)",
-        danismanText: "Sigortalının tescil tarihini belirtir misiniz? (GG.AA.YYYY)",
+        // 28.07.2026: kullanicinin istegiyle hangi tescilin (uzmanlik/diploma)
+        // tarihi oldugu aciklandi - eskiden sadece "Tescil tarihinizi" diyordu,
+        // hangi tescil oldugu belirsizdi.
+        text: (answers) => {
+          const tescilTuru = answers.uzman_mi === "Evet" ? "Uzmanlık" : "Diploma";
+          return malpraktisMetin(
+            answers,
+            (hoca) => `${hoca}, ${tescilTuru.toLocaleLowerCase("tr")} tescil tarihinizi belirtir misiniz? (GG.AA.YYYY)`,
+            (hoca) => `${hoca}ın ${tescilTuru.toLocaleLowerCase("tr")} tescil tarihini belirtir misiniz? (GG.AA.YYYY)`
+          );
+        },
+        danismanText: (answers) => {
+          const tescilTuru = answers.uzman_mi === "Evet" ? "uzmanlık" : "diploma";
+          return `Sigortalının ${tescilTuru} tescil tarihini belirtir misiniz? (GG.AA.YYYY)`;
+        },
         type: "text",
         validate: tarihGecerliMi,
         validationError: "Lütfen tarihi GG.AA.YYYY formatında yazar mısınız? (Örn: 15.05.2015)"
       },
       {
         id: "sigorta_ettiren_turu",
-        text: "Sigorta ettiren türünüz nedir?",
+        text: (answers) =>
+          malpraktisMetin(
+            answers,
+            (hoca) => `${hoca}, sigorta ettiren türünüz nedir?`,
+            (hoca) => `${hoca}ın sigorta ettiren türü nedir?`
+          ),
         danismanText: "Sigortalının sigorta ettiren türü nedir?",
         type: "choice",
         options: ["Serbest Çalışan", "Kamu Çalışanı"]
       },
       {
         id: "saglik_kurumu",
-        text: "Bağlı olduğunuz sağlık kurumunu söyler misiniz?",
+        text: (answers) =>
+          malpraktisMetin(
+            answers,
+            (hoca) => `${hoca}, bağlı olduğunuz sağlık kurumunu söyler misiniz?`,
+            (hoca) => `${hoca}ın bağlı olduğu sağlık kurumunu söyler misiniz?`
+          ),
         danismanText: "Sigortalının bağlı olduğu sağlık kurumunu söyler misiniz?",
         type: "text"
       },
@@ -794,3 +1269,10 @@ module.exports = {
     ]
   }
 };
+
+// "Kendiniz için mi, başkası için mi" ve sehir-otomatik-cikarma yardimcilari,
+// conversationEngine.js'in de kullanabilmesi icin urun nesnelerinin yaninda
+// ayrica named export olarak da disariya aciliyor.
+module.exports.baskasiIcinMi = baskasiIcinMi;
+module.exports.sehirAdiBul = sehirAdiBul;
+module.exports.saglikYetiskinMi = saglikYetiskinMi;
