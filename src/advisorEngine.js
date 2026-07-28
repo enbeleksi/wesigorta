@@ -40,6 +40,12 @@ const { gunSelamlamasi } = require("./gunSelamlama");
 const musteriProfilStore = require("./musteriProfilStore");
 const { belgeleriTekPdfeBirlestir } = require("./pdfBirlestir");
 const { belgeFotografiAnalizEt, kimlikOnArkaTutarliMi } = require("./belgeAnaliz");
+// 28.07.2026 eklendi: danismanin musteri adina olusturdugu yeni talep akisinda
+// (DANISMAN_YENI_SORU) Trafik/Kasko'nun "belge" tipi sorulari (proforma/ruhsat
+// OCR) da musteri akisiyla (conversationEngine.js) AYNI analiz fonksiyonlarini
+// kullanarak destekleyebilmek icin eklendi.
+const { ruhsatFotografiAnalizEt } = require("./ruhsatAnaliz");
+const { proformaAnalizEt } = require("./proformaAnaliz");
 const { vefatTeminatiHesapla } = require("./vefatTeminatiHesapla");
 const { satisSozlesmesiAnalizEt } = require("./satisSozlesmesiAnaliz");
 const { BES_FONLARI, fonlariKategoriyeGoreGrupla } = require("./besFonVerileri");
@@ -1170,11 +1176,23 @@ async function leadDetayGoster(from, session, lead) {
 // Bir sorular listesinden, danisman modunda gosterilmeyecek (danismandaGizle)
 // ya da skipIf ile atlanmasi gereken sorulari atlayip bir sonraki gecerli
 // index'i bulur.
+// 28.07.2026: "already answered" kontrolu eklendi (conversationEngine.js'deki
+// nextValidIndex ile AYNI mantik) - Trafik/Kasko'nun proforma/ruhsat OCR'i
+// (bkz. handleAdvisorMessage'daki media isleyici), marka/model/motor_no/
+// sasi_no/plaka/tc_kimlik gibi bazi alanlari, o alanlarin KENDI "fallback"
+// sorusuna (orn. MARKA_FALLBACK_SORU) hic gelinmeden ONCEDEN dolduruyor - bu
+// kontrol olmadan, zaten OCR'dan dolu bir alan icin fallback sorusu YINE DE
+// sorulurdu (skipIf tanimli olmadigi icin). "geri al" (oncekiGecerliIndex)
+// icin BU KONTROL BILEREK eklenmedi - geriye giderken zaten cevaplanmis
+// TUM onceki sorular dogal olarak "answered" olur, bu kontrol eklenseydi geri
+// al hicbir zaman bir onceki soruyu bulamazdi.
 function sonrakiGecerliIndex(sorular, answers, baslangic) {
   let idx = baslangic;
   while (idx < sorular.length) {
     const soru = sorular[idx];
-    if (soru.danismandaGizle || (soru.skipIf && soru.skipIf(answers))) {
+    const atlanmali = soru.danismandaGizle || (soru.skipIf && soru.skipIf(answers));
+    const zatenCevaplanmis = Object.prototype.hasOwnProperty.call(answers, soru.id) && answers[soru.id];
+    if (atlanmali || zatenCevaplanmis) {
       idx += 1;
       continue;
     }
@@ -1863,9 +1881,58 @@ async function yeniTalepUrunSec(from, session) {
   await sendList(from, "Hangi ürün için yeni bir talep oluşturmak istersiniz?", "Ürün Seç", etiketler);
 }
 
+// Ozel Saglik/TSS'nin "aile_dongu" tipi sorusu (esin/cocuklarin toplanmasi),
+// conversationEngine.js'deki saglikAileSorusunuSor/saglikAileCevabiIsle
+// fonksiyonlarini (bkz. o dosya) BURADA DA aynen kullanabilmek icin bir
+// "vekil" (shim) session olusturur. O fonksiyonlar cagirdiklari session
+// nesnesinde SADECE .answers / .saglikAileAsama / .saglikAileGecici
+// alanlarini okuyup yaziyor - bu shim bu 3 alani, danismanin KENDI
+// oturumundaki (musteri akisiyla CATISMAYAN, ayri) danismanYeniAnswers/
+// danismanSaglikAileAsama/danismanSaglikAileGecici alanlarina yonlendiriyor.
+function danismanAileShimOlustur(session) {
+  return {
+    get answers() {
+      return session.danismanYeniAnswers;
+    },
+    set answers(deger) {
+      session.danismanYeniAnswers = deger;
+    },
+    get saglikAileAsama() {
+      return session.danismanSaglikAileAsama;
+    },
+    set saglikAileAsama(deger) {
+      session.danismanSaglikAileAsama = deger;
+    },
+    get saglikAileGecici() {
+      return session.danismanSaglikAileGecici;
+    },
+    set saglikAileGecici(deger) {
+      session.danismanSaglikAileGecici = deger;
+    }
+  };
+}
+
 async function danismanSoruSor(from, session) {
   const flow = flows[session.danismanYeniUrunKey];
   const soru = flow.questions[session.danismanYeniSoruIndex];
+
+  // "belge" tipi (Trafik/Kasko proforma/ruhsat OCR) - cevap yaziyla degil,
+  // bir fotograf/PDF gonderilerek verilir (bkz. handleAdvisorMessage'daki
+  // media isleyici), burada sadece istek metnini gosteriyoruz.
+  if (soru.type === "belge") {
+    const metin = conversationEngine.resolveDanismanText(soru, session.danismanYeniAnswers);
+    await sendText(from, metin);
+    return;
+  }
+
+  // "aile_dongu" tipi (Ozel Saglik/TSS esin/cocuklarin toplanmasi) - gercek
+  // soru-cevap akisi tamamen conversationEngine.js'deki motora devrediliyor.
+  if (soru.type === "aile_dongu") {
+    if (!session.danismanSaglikAileAsama) session.danismanSaglikAileAsama = "ES_SORULUYOR";
+    await conversationEngine.saglikAileSorusunuSor(from, danismanAileShimOlustur(session));
+    return;
+  }
+
   const metin = conversationEngine.resolveDanismanText(soru, session.danismanYeniAnswers);
 
   if (soru.type === "choice") {
@@ -1888,12 +1955,24 @@ async function danismanYeniTalepiTamamla(from, session) {
   const olusturanEtiketi = danisman ? danisman.name : "Bir danışman";
 
   // Danismandaki (bu akista hic sorulmayan) sorulari cikartip ozet olusturuyoruz.
+  // "belge" (proforma/ruhsat OCR) ve "aile_dongu" (Ozel Saglik/TSS aile
+  // bireyleri) tipi sorularin gercek cevabi answers[q.id]'de DEGIL, ayri
+  // alanlarda (marka/model/.../answers.saglik_kisiler) tutuluyor - bu yuzden
+  // conversationEngine.js'deki AYNI ozetlenecekSorular fonksiyonuyla (bkz. o
+  // dosyadaki yorum) bu iki tip ozetten haric tutulup, gercek bilgileri
+  // asagida aracEkBilgiSatirlari/saglikKisiSatirlari ile ayrica ekleniyor.
   const filtrelenmisFlow = { ...flow, questions: flow.questions.filter((q) => !q.danismandaGizle) };
-  const askedQuestions = filtrelenmisFlow.questions.filter((q) => !(q.skipIf && q.skipIf(answers)));
+  const askedQuestions = conversationEngine.ozetlenecekSorular(filtrelenmisFlow, answers);
   const summaryLines = askedQuestions.map((q) => {
     const soruMetni = conversationEngine.resolveDanismanText(q, answers);
     return `- ${soruMetni.replace(/\?$/, "")}: ${answers[q.id]}`;
   });
+  const aracEkBilgiSatirlari = conversationEngine
+    .aracEkBilgiSatirlariOlustur({ answers }, ": ")
+    .map((satir) => `- ${satir}`);
+  const saglikKisiSatirlari = conversationEngine
+    .saglikKisileriOzetSatirlariOlustur({ answers })
+    .map((satir) => `- ${satir}`);
 
   const agentMessage =
     `\u{1F4CB} Yeni iş talebi geldi\n` +
@@ -1901,7 +1980,9 @@ async function danismanYeniTalepiTamamla(from, session) {
     `Sigortalı: ${musteriAdi}\n` +
     `Telefon: ${sigortaliTelefon}\n` +
     `Ürün: ${flow.label}\n\n` +
-    summaryLines.join("\n");
+    summaryLines.join("\n") +
+    (aracEkBilgiSatirlari.length ? "\n" + aracEkBilgiSatirlari.join("\n") : "") +
+    (saglikKisiSatirlari.length ? "\n" + saglikKisiSatirlari.join("\n") : "");
 
   const sahteSession = { answers, name: musteriAdi };
   const kompaktDetayTemel = conversationEngine.kompaktDetayOlustur(filtrelenmisFlow, sahteSession, sigortaliTelefon);
@@ -1916,7 +1997,7 @@ async function danismanYeniTalepiTamamla(from, session) {
     await conversationEngine.bildirimGonder(numara, flow.label, musteriAdi, sigortaliTelefon, agentMessage, kompaktDetay);
   }
 
-  leadStore.yeniLeadOlustur({
+  const yeniLead = leadStore.yeniLeadOlustur({
     telefon: sigortaliTelefon,
     musteriAdi,
     urun: flow.label,
@@ -1924,6 +2005,13 @@ async function danismanYeniTalepiTamamla(from, session) {
     danismanNumarasi: from,
     ozet: kompaktDetay
   });
+
+  // Proforma/ruhsat gibi OCR ile okunan belgeler varsa (bkz. DANISMAN_YENI_SORU
+  // altindaki media isleyici) talebe ekliyoruz - musteri tarafindaki
+  // finishFlow'un session.ekBelgeler icin yaptigi ile AYNI mantik.
+  if (Array.isArray(session.danismanYeniEkBelgeler)) {
+    session.danismanYeniEkBelgeler.forEach((belge) => leadStore.belgeEkle(yeniLead.id, belge));
+  }
 
   // BES ve Prim Iadeli Hayat Sigortasi gibi bazi urunlerde, danisman tarafindan
   // olusturulan talepler de Garanti Emeklilik'e otomatik mail olarak gider.
@@ -2690,6 +2778,104 @@ async function handleAdvisorMessage(from, parsed) {
       }
     }
 
+    // Danismanin musteri adina olusturdugu yeni talep akisinda (bkz. yukarida
+    // yeniTalepUrunSec/danismanSoruSor), Trafik/Kasko'nun "belge" tipi sorusu
+    // (proforma/ruhsat OCR) gelirse - musteri akisiyla (conversationEngine.js'deki
+    // message.type === "media" isleyicisi) AYNI analiz fonksiyonlarini
+    // kullanarak isliyoruz, sadece sonuclari session.answers yerine
+    // session.danismanYeniAnswers'a yaziyoruz.
+    if (session.state === "DANISMAN_YENI_SORU") {
+      const flow = flows[session.danismanYeniUrunKey];
+      const soru = flow.questions[session.danismanYeniSoruIndex];
+      if (!soru || soru.type !== "belge") {
+        await sendText(from, "Şu an bir fotoğraf/belge beklemiyoruz, lütfen cevabınızı yazılı olarak paylaşır mısınız? 🙏");
+        return;
+      }
+      const mimeGecerliMi =
+        parsed.mimeType && (parsed.mimeType.startsWith("image/") || parsed.mimeType === "application/pdf");
+      if (!mimeGecerliMi) {
+        await sendText(from, "Lütfen belgeyi fotoğraf ya da PDF olarak gönderir misiniz? 🙏");
+        return;
+      }
+      try {
+        const { buffer, mimeType } = await mediaIndir(parsed.mediaId);
+        const gercekMime = parsed.mimeType || mimeType;
+        await sendText(from, "Belgenizi inceliyorum, bir saniye... 🔍");
+
+        if (soru.belgeTuru === "proforma") {
+          const sonuc = await proformaAnalizEt(buffer, gercekMime);
+          if (!sonuc.okunabilir) {
+            await sendText(
+              from,
+              `Belgeyi net okuyamadım 😕 ${sonuc.aciklama || ""}\n\n` +
+                "Proforma belgesini (fotoğraf ya da PDF olarak) tekrar gönderir misiniz?"
+            );
+            return;
+          }
+          if (sonuc.marka) session.danismanYeniAnswers.marka = sonuc.marka;
+          if (sonuc.model) session.danismanYeniAnswers.model = sonuc.model;
+          if (sonuc.motorNo) session.danismanYeniAnswers.motor_no = sonuc.motorNo;
+          if (sonuc.sasiNo) session.danismanYeniAnswers.sasi_no = sonuc.sasiNo;
+          if (sonuc.modelYili) session.danismanYeniAnswers.model_yili = sonuc.modelYili;
+          if (sonuc.adSoyad) session.danismanYeniAnswers.proforma_ad_soyad = sonuc.adSoyad;
+          if (sonuc.tcKimlik && tcKimlikGecerliMi(sonuc.tcKimlik)) session.danismanYeniAnswers.tc_kimlik = sonuc.tcKimlik;
+          if (sonuc.plaka) session.danismanYeniAnswers.plaka = sonuc.plaka;
+
+          if (!session.danismanYeniEkBelgeler) session.danismanYeniEkBelgeler = [];
+          session.danismanYeniEkBelgeler.push({
+            dosyaAdi: gercekMime === "application/pdf" ? "proforma.pdf" : "proforma.jpg",
+            mimeType: gercekMime,
+            veriBase64: buffer.toString("base64")
+          });
+          await sendText(from, "Proforma belgesini inceledim, teşekkürler ✅");
+        } else {
+          const sonuc = await ruhsatFotografiAnalizEt(buffer, gercekMime);
+          if (!sonuc.okunabilir) {
+            await sendText(
+              from,
+              `Ruhsatı net okuyamadım 😕 ${sonuc.aciklama || ""}\n\n` +
+                "Lütfen tüm bilgilerin net göründüğü, iyi ışıkta bir fotoğraf çeker misiniz?"
+            );
+            return;
+          }
+          if (sonuc.plaka) session.danismanYeniAnswers.plaka = sonuc.plaka;
+          if (sonuc.marka) session.danismanYeniAnswers.marka = sonuc.marka;
+          if (sonuc.model) session.danismanYeniAnswers.model = sonuc.model;
+          if (sonuc.motorNo) session.danismanYeniAnswers.motor_no = sonuc.motorNo;
+          if (sonuc.sasiNo) session.danismanYeniAnswers.sasi_no = sonuc.sasiNo;
+          if (sonuc.adSoyad) session.danismanYeniAnswers.ruhsat_ad_soyad = sonuc.adSoyad;
+          if (sonuc.tcKimlik && tcKimlikGecerliMi(sonuc.tcKimlik)) session.danismanYeniAnswers.tc_kimlik = sonuc.tcKimlik;
+
+          if (!session.danismanYeniEkBelgeler) session.danismanYeniEkBelgeler = [];
+          session.danismanYeniEkBelgeler.push({
+            dosyaAdi: "ruhsat.jpg",
+            mimeType: gercekMime,
+            veriBase64: buffer.toString("base64")
+          });
+          await sendText(from, "Ruhsat fotoğrafını inceledim, teşekkürler ✅");
+        }
+
+        // Soru cevaplanmis sayilsin diye isaretliyoruz (gercek veri yukarida
+        // ayri alanlara yazildi - bkz. danismanYeniTalepiTamamla/ozetlenecekSorular).
+        session.danismanYeniAnswers[soru.id] = true;
+
+        session.danismanYeniSoruIndex = sonrakiGecerliIndex(
+          flow.questions,
+          session.danismanYeniAnswers,
+          session.danismanYeniSoruIndex + 1
+        );
+        if (session.danismanYeniSoruIndex >= flow.questions.length) {
+          await danismanYeniTalepiTamamla(from, session);
+        } else {
+          await danismanSoruSor(from, session);
+        }
+      } catch (err) {
+        console.error("Danisman yeni talep - belge analizi hatasi:", err?.response?.data || err.message);
+        await sendText(from, "Belgeyi analiz ederken bir sorun oluştu 🙏 Lütfen tekrar gönderir misiniz?");
+      }
+      return;
+    }
+
     if (session.state === "DANISMAN_LEAD_DETAY" && session.danismanSeciliLeadId) {
       try {
         const { buffer, mimeType } = await mediaIndir(parsed.mediaId);
@@ -3037,6 +3223,12 @@ async function handleAdvisorMessage(from, parsed) {
       }
       session.danismanYeniUrunKey = urunKey;
       session.danismanYeniAnswers = {};
+      // Onceki bir "yeni talep" akisindan kalmis olabilecek belge/aile_dongu
+      // durumunu temizliyoruz - aksi halde onceki talepteki proforma/ruhsat
+      // belgeleri ya da yarim kalmis aile toplama asamasi yeni talebe sizabilir.
+      session.danismanYeniEkBelgeler = [];
+      session.danismanSaglikAileAsama = null;
+      session.danismanSaglikAileGecici = null;
       session.state = "DANISMAN_YENI_TELEFON_BEKLE";
       await sendText(
         from,
@@ -3067,6 +3259,16 @@ async function handleAdvisorMessage(from, parsed) {
 
       // "geri al" - bkz. DANISMAN_SATIS_SORU'daki ayni ozellik icin yorum.
       if (GERI_AL_REGEX.test(userText)) {
+        // Su anki soru "aile_dongu" ise ve aile toplama alt-akisi yarim
+        // kalmissa, once bu alt-akisin durumunu temizliyoruz - aksi halde
+        // bu soruya tekrar gelindiginde (or. baska bir "geri al" ya da ileri
+        // gidip tekrar donulmesiyle) yarim kalmis asamadan devam eder,
+        // basa (ES_SORULUYOR'dan) baslamaz.
+        const suankiSoru = flow.questions[session.danismanYeniSoruIndex];
+        if (suankiSoru && suankiSoru.type === "aile_dongu" && session.danismanSaglikAileAsama) {
+          session.danismanSaglikAileAsama = null;
+          session.danismanSaglikAileGecici = null;
+        }
         const oncekiIndex = oncekiGecerliIndex(
           flow.questions,
           session.danismanYeniAnswers,
@@ -3086,6 +3288,49 @@ async function handleAdvisorMessage(from, parsed) {
       }
 
       const soru = flow.questions[session.danismanYeniSoruIndex];
+
+      // "belge" tipi (Trafik/Kasko proforma/ruhsat OCR) - cevap SADECE bir
+      // fotograf/PDF gonderilerek verilebilir (bkz. handleAdvisorMessage'daki
+      // media isleyici), yaziyla gelen bir cevabi kabul etmiyoruz.
+      if (soru.type === "belge") {
+        await sendText(
+          from,
+          "Bu adımda bir belge (fotoğraf ya da PDF) göndermeniz gerekiyor, lütfen belgeyi WhatsApp üzerinden gönderir misiniz? 📎"
+        );
+        return;
+      }
+
+      // "aile_dongu" tipi (Ozel Saglik/TSS esin/cocuklarin toplanmasi) - gercek
+      // soru-cevap akisi tamamen conversationEngine.js'deki motora devrediliyor
+      // (bkz. danismanAileShimOlustur yorumu). Motor "true" donduren kadar
+      // (yani aile toplama TAMAMEN bitene kadar) her cevap burada islenip
+      // sonraki alt-soru zaten motorun kendisi tarafindan gonderiliyor.
+      if (soru.type === "aile_dongu") {
+        const tamamlandiMi = await conversationEngine.saglikAileCevabiIsle(
+          from,
+          danismanAileShimOlustur(session),
+          userText
+        );
+        if (!tamamlandiMi) return;
+        session.danismanSaglikAileAsama = null;
+        session.danismanSaglikAileGecici = null;
+        // Soru cevaplanmis sayilsin diye isaretliyoruz (gercek veri zaten
+        // yukarida answers.saglik_kisiler dizisine yazildi - bu true degeri
+        // sadece ozette bu sorunun kendisinin GORUNMEMESI icin
+        // ozetlenecekSorular tarafindan zaten filtreleniyor).
+        session.danismanYeniAnswers[soru.id] = true;
+        session.danismanYeniSoruIndex = sonrakiGecerliIndex(
+          flow.questions,
+          session.danismanYeniAnswers,
+          session.danismanYeniSoruIndex + 1
+        );
+        if (session.danismanYeniSoruIndex >= flow.questions.length) {
+          await danismanYeniTalepiTamamla(from, session);
+        } else {
+          await danismanSoruSor(from, session);
+        }
+        return;
+      }
 
       if (soru.type === "choice") {
         const secilen = matchOption(userText, soru.options);

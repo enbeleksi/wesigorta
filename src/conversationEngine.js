@@ -1793,5 +1793,21 @@ module.exports = {
   bildirimGonder,
   guvenlikAgiNumaralari,
   resolveAgentNumber,
-  sablonParametresiIcinTemizle
+  sablonParametresiIcinTemizle,
+  // 28.07.2026 eklendi: danismanin musteri adina WhatsApp'tan yeni talep
+  // olusturdugu akis (advisorEngine.js -> DANISMAN_YENI_SORU), Trafik/Kasko'nun
+  // "belge" (proforma/ruhsat OCR) ve Ozel Saglik/TSS'nin "aile_dongu" (esin/
+  // cocuklarin toplanmasi) soru tiplerini DE desteklemesi icin bu yardimci
+  // fonksiyonlar disari aciliyor - boylece ayni mantik iki yerde ayri ayri
+  // yazilip birbirinden sapmiyor. saglikAileSorusunuSor/saglikAileCevabiIsle
+  // "session" olarak SADECE .answers/.saglikAileAsama/.saglikAileGecici
+  // alanlarina ihtiyac duyuyor - advisorEngine.js kendi session'i (danismanin
+  // KENDI oturumu) uzerinde bu isimlerle CATISMAMASI icin bir "shim" (vekil
+  // nesne, get/set ile session.danismanYeniAnswers/danismanSaglikAileAsama/
+  // danismanSaglikAileGecici alanlarina yonlendiren) kullanarak cagiriyor.
+  ozetlenecekSorular,
+  aracEkBilgiSatirlariOlustur,
+  saglikAileSorusunuSor,
+  saglikAileCevabiIsle,
+  saglikKisileriOzetSatirlariOlustur
 };

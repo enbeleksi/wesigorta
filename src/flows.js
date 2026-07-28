@@ -204,12 +204,21 @@ const SIGORTA_ETTIREN_TC_KIMLIK_SORU = {
 function saglikUrunuSorulari() {
   return [
     ...DANISMAN_SORULARI,
+    // 28.07.2026: DASK/Konut/Malpraktis'teki "hedef_kisi" sorusunun aksine bu
+    // soru danismandan GIZLENMIYOR - cunku burada sadece "kendisi mi/baskasi
+    // mi" ayrimi degil, "Ailem (Birden Fazla)" secimiyle asagidaki
+    // AILE_BIREYLERI_DONGUSU_SORUSU'nun (esin/cocuklarin toplanmasi) TETIKLENIP
+    // TETIKLENMEYECEGI de belirleniyor. Gizlenseydi answers.kimin_icin hic
+    // set edilmeyecegi (undefined kalacagi) icin aile_dongu sorusunun skipIf'i
+    // her zaman true donup danismanin hicbir zaman "Ailem" secip birden fazla
+    // kisiyi tek talepte giremeyecegi bir bosluk olusuyordu - bu yuzden burada
+    // ACIKCA sorulmasi tercih edildi.
     {
       id: "kimin_icin",
       text: "Kimin için sigorta yaptırmak istiyorsunuz?",
+      danismanText: "Sigorta kimin için yaptırılacak?",
       type: "choice",
-      options: ["Kendim", "Eşim", "Çocuğum", "Ailem (Birden Fazla)"],
-      danismandaGizle: true
+      options: ["Kendim", "Eşim", "Çocuğum", "Ailem (Birden Fazla)"]
     },
     {
       id: "ad_soyad",
