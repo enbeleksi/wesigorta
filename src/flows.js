@@ -751,24 +751,18 @@ function hedefAdSoyadSorusuMetni(answers) {
     : "İsim ve soyisminizi paylaşır mısınız?";
 }
 
-// --- Malpraktis'e ozel "hocam" hitap deseni (28.07.2026 eklendi) ---
-// Malpraktis'te musteri (hekim) her zaman ilk adi + "hocam" ile hitap
-// ediliyor. "Kendim İçin" durumunda ikinci sahis ("...mısınız?" gibi), "Başkası
-// İçin" durumunda ucuncu sahis ("...mı?" gibi) kullanilir - kullanicinin
-// verdigi ornek: "Ahmet hocam, asistan mısınız?" (kendi) / "Ahmet hocam
-// asistan mı?" (baskasi).
-function malpraktisIlkAd(answers) {
-  const isim = baskasiIcinMi(answers) ? hedefKisiAdi(answers) : answers.ad_soyad;
-  return isim ? isim.trim().split(/\s+/)[0] : null;
-}
-// ikinciSahisUret/ucuncuSahisUret: (hocaEtiketi) => "metin" - hocaEtiketi
-// "Ahmet hocam" formatinda gelir (isim bilinmiyorsa emniyetli bir fallback
-// olarak sadece "Hocam" kullanilir, pratikte bu durum olusmamali cunku isim
-// hedef_kisi/ASK_NAME asamasinda zaten alinmis oluyor).
-function malpraktisMetin(answers, ikinciSahisUret, ucuncuSahisUret) {
-  const ilkAd = malpraktisIlkAd(answers);
-  const hocaEtiketi = ilkAd ? `${ilkAd} hocam` : "Hocam";
-  return baskasiIcinMi(answers) ? ucuncuSahisUret(hocaEtiketi) : ikinciSahisUret(hocaEtiketi);
+// --- Malpraktis soru metinleri (28.07.2026 eklendi, 29.07.2026 duzeltildi) ---
+// Once her sorunun basina "Ahmet hocam, ..." seklinde bir hitap ekleniyordu -
+// kullanicinin geri bildirimine gore (her soruda tekrar edince "cok sacma"
+// durdugu icin) bundan vazgecildi. Malpraktis'te hekime "Hocam" hitabi artik
+// SADECE tek seferlik yerlerde kullaniliyor (bkz. flow.hitapHocam ve
+// conversationEngine.js'teki finishFlow - ozet mesajinin basinda "Teşekkürler
+// Ahmet Hocam!" gibi) - soru soru TEKRAR EDILMIYOR. Diger urunlerdeki
+// (DASK/Konut vb.) ayni desen kullanilarak "Kendim İçin" durumunda duz
+// ikinci-sahis metin, "Başkası İçin" durumunda ise isim uzerinden kurulmus
+// ucuncu-sahis metin gosterilir (bkz. kisiyeGoreMetin, yukarida).
+function malpraktisMetin(answers, ikinciSahisMetni, ucuncuSahisUret) {
+  return kisiyeGoreMetin(answers, ikinciSahisMetni, ucuncuSahisUret);
 }
 
 module.exports = {
@@ -1162,11 +1156,7 @@ module.exports = {
       {
         id: "asistan_mi",
         text: (answers) =>
-          malpraktisMetin(
-            answers,
-            (hoca) => `${hoca}, asistan mısınız?`,
-            (hoca) => `${hoca} asistan mı?`
-          ),
+          malpraktisMetin(answers, "Asistan mısınız?", (isim) => `${isim} asistan mı?`),
         danismanText: "Sigortalı asistan mı?",
         type: "choice",
         options: ["Evet", "Hayır"]
@@ -1174,11 +1164,7 @@ module.exports = {
       {
         id: "uzman_mi",
         text: (answers) =>
-          malpraktisMetin(
-            answers,
-            (hoca) => `${hoca}, uzman mısınız?`,
-            (hoca) => `${hoca} uzman mı?`
-          ),
+          malpraktisMetin(answers, "Uzman mısınız?", (isim) => `${isim} uzman mı?`),
         danismanText: "Sigortalı uzman mı?",
         type: "choice",
         options: ["Evet", "Hayır"],
@@ -1190,8 +1176,8 @@ module.exports = {
         text: (answers) =>
           malpraktisMetin(
             answers,
-            (hoca) => `${hoca}, uzmanlık dalınızı belirtir misiniz?`,
-            (hoca) => `${hoca}ın uzmanlık dalını belirtir misiniz?`
+            "Uzmanlık dalınızı belirtir misiniz?",
+            (isim) => `${tamlayanEkiUygula(isim)} uzmanlık dalını belirtir misiniz?`
           ),
         danismanText: "Sigortalının uzmanlık dalını belirtir misiniz?",
         type: "text",
@@ -1203,8 +1189,8 @@ module.exports = {
         text: (answers) =>
           malpraktisMetin(
             answers,
-            (hoca) => `${hoca}, aktif olarak hasta bakıyor musunuz?`,
-            (hoca) => `${hoca} aktif olarak hasta bakıyor mu?`
+            "Aktif olarak hasta bakıyor musunuz?",
+            (isim) => `${isim} aktif olarak hasta bakıyor mu?`
           ),
         danismanText: "Sigortalı aktif olarak hasta bakıyor mu?",
         type: "choice",
@@ -1212,13 +1198,17 @@ module.exports = {
       },
       {
         id: "yillik_hasta_sayisi",
+        // 29.07.2026: kullanicinin istegiyle "yıllık hasta sayısı" ->
+        // "yıllık ortalama hasta sayısı" olarak duzeltildi (daha net bir
+        // ifade - "yaklaşık olarak" ile birlikte kullanildiginda anlam
+        // tekrari oluyordu, bu yuzden "yaklaşık olarak" kaldirildi).
         text: (answers) =>
           malpraktisMetin(
             answers,
-            (hoca) => `${hoca}, yıllık hasta sayınızı yaklaşık olarak söyler misiniz?`,
-            (hoca) => `${hoca}ın yıllık hasta sayısını yaklaşık olarak söyler misiniz?`
+            "Yıllık ortalama hasta sayınızı söyler misiniz?",
+            (isim) => `${tamlayanEkiUygula(isim)} yıllık ortalama hasta sayısını söyler misiniz?`
           ),
-        danismanText: "Sigortalının yıllık hasta sayısını yaklaşık olarak söyler misiniz?",
+        danismanText: "Sigortalının yıllık ortalama hasta sayısını söyler misiniz?",
         type: "text",
         validate: pozitifSayiMi,
         validationError: "Lütfen hasta sayısını sadece rakamla yazar mısınız? (Örn: 500)",
@@ -1232,8 +1222,8 @@ module.exports = {
         text: (answers) =>
           malpraktisMetin(
             answers,
-            (hoca) => `${hoca}, iş adresinizi paylaşır mısınız?`,
-            (hoca) => `${hoca}ın iş adresini paylaşır mısınız?`
+            "İş adresinizi paylaşır mısınız?",
+            (isim) => `${tamlayanEkiUygula(isim)} iş adresini paylaşır mısınız?`
           ),
         danismanText: "Sigortalının iş adresini paylaşır mısınız?",
         type: "text"
@@ -1244,10 +1234,11 @@ module.exports = {
         // uzmansa "uzmanlık tescil", degilse (asistan ya da tabip) "diploma tescil".
         text: (answers) => {
           const tescilTuru = answers.uzman_mi === "Evet" ? "Uzmanlık" : "Diploma";
+          const tescilTuruKucuk = tescilTuru.toLocaleLowerCase("tr");
           return malpraktisMetin(
             answers,
-            (hoca) => `${hoca}, ${tescilTuru.toLocaleLowerCase("tr")} tescil numaranızı paylaşır mısınız?`,
-            (hoca) => `${hoca}ın ${tescilTuru.toLocaleLowerCase("tr")} tescil numarasını paylaşır mısınız?`
+            `${tescilTuru} tescil numaranızı paylaşır mısınız?`,
+            (isim) => `${tamlayanEkiUygula(isim)} ${tescilTuruKucuk} tescil numarasını paylaşır mısınız?`
           );
         },
         danismanText: (answers) =>
@@ -1263,10 +1254,11 @@ module.exports = {
         // hangi tescil oldugu belirsizdi.
         text: (answers) => {
           const tescilTuru = answers.uzman_mi === "Evet" ? "Uzmanlık" : "Diploma";
+          const tescilTuruKucuk = tescilTuru.toLocaleLowerCase("tr");
           return malpraktisMetin(
             answers,
-            (hoca) => `${hoca}, ${tescilTuru.toLocaleLowerCase("tr")} tescil tarihinizi belirtir misiniz? (GG.AA.YYYY)`,
-            (hoca) => `${hoca}ın ${tescilTuru.toLocaleLowerCase("tr")} tescil tarihini belirtir misiniz? (GG.AA.YYYY)`
+            `${tescilTuru} tescil tarihinizi belirtir misiniz? (GG.AA.YYYY)`,
+            (isim) => `${tamlayanEkiUygula(isim)} ${tescilTuruKucuk} tescil tarihini belirtir misiniz? (GG.AA.YYYY)`
           );
         },
         danismanText: (answers) => {
@@ -1282,8 +1274,8 @@ module.exports = {
         text: (answers) =>
           malpraktisMetin(
             answers,
-            (hoca) => `${hoca}, sigorta ettiren türünüz nedir?`,
-            (hoca) => `${hoca}ın sigorta ettiren türü nedir?`
+            "Sigorta ettiren türünüz nedir?",
+            (isim) => `${tamlayanEkiUygula(isim)} sigorta ettiren türü nedir?`
           ),
         danismanText: "Sigortalının sigorta ettiren türü nedir?",
         type: "choice",
@@ -1294,8 +1286,8 @@ module.exports = {
         text: (answers) =>
           malpraktisMetin(
             answers,
-            (hoca) => `${hoca}, bağlı olduğunuz sağlık kurumunu söyler misiniz?`,
-            (hoca) => `${hoca}ın bağlı olduğu sağlık kurumunu söyler misiniz?`
+            "Bağlı olduğunuz sağlık kurumunu söyler misiniz?",
+            (isim) => `${tamlayanEkiUygula(isim)} bağlı olduğu sağlık kurumunu söyler misiniz?`
           ),
         danismanText: "Sigortalının bağlı olduğu sağlık kurumunu söyler misiniz?",
         type: "text"

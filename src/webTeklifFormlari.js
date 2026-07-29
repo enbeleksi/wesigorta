@@ -149,7 +149,7 @@ module.exports = function (app) {
       soruSatiriEkle(detaySatirlari, "Uzman mı", answers.uzman_mi);
       soruSatiriEkle(detaySatirlari, "Uzmanlık Dalı", answers.uzmanlik_dali);
       soruSatiriEkle(detaySatirlari, "Aktif Hasta Bakıyor mu", answers.hasta_bakiyor_mu);
-      soruSatiriEkle(detaySatirlari, "Yıllık Hasta Sayısı", answers.yillik_hasta_sayisi);
+      soruSatiriEkle(detaySatirlari, "Yıllık Ortalama Hasta Sayısı", answers.yillik_hasta_sayisi);
       soruSatiriEkle(detaySatirlari, "İş Adresi", answers.is_adresi);
       soruSatiriEkle(detaySatirlari, `${tur} Tescil No`, answers.tescil_no);
       soruSatiriEkle(detaySatirlari, `${tur} Tescil Tarihi`, answers.tescil_tarihi);

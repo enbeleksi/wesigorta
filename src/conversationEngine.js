@@ -620,7 +620,7 @@ const ID_KISA_ETIKET = {
   uzman_mi: "Uzman mı",
   is_adresi: "İş Adresi",
   hasta_bakiyor_mu: "Hasta Bakıyor mu",
-  yillik_hasta_sayisi: "Yıllık Hasta Sayısı",
+  yillik_hasta_sayisi: "Yıllık Ortalama Hasta Sayısı",
   tescil_no: "Tescil No",
   tescil_tarihi: "Tescil Tarihi",
   asistan_mi: "Asistan mı",
@@ -1507,12 +1507,13 @@ async function finishFlow(from, session) {
     const questionText = resolveText(q, session.answers);
     return `- ${questionText.replace(/\?$/, "")}: ${cevabiMetneCevir(session.answers[q.id])}`;
   });
-  // Bazi urunlerde (orn. Malpraktis'te hekimlere) soyisim olmadan, sadece isim
-  // + "Hocam" diye hitap ediyoruz. flow.hitapHocam true ise bunu uygula.
-  const hitapIsmi =
-    flow.hitapHocam && session.name
-      ? `${session.name.trim().split(/\s+/)[0]} Hocam`
-      : session.name;
+  // Bazi urunlerde (orn. Malpraktis'te hekimlere) isim+soyisimden sonra
+  // "Hocam" diye hitap ediyoruz. flow.hitapHocam true ise bunu uygula.
+  // 29.07.2026 DUZELTILDI: eskiden burada sadece ILK AD kullanilip soyisim
+  // atiliyordu ("Mehmet Hocam") - kullanicinin talebi uzerine ("Başkası İçin"
+  // durumunda/genel olarak sadece isimle hitap etmek olmaz) artik TAM isim
+  // (isim + soyisim) korunuyor ("Mehmet Yılmaz Hocam").
+  const hitapIsmi = flow.hitapHocam && session.name ? `${session.name} Hocam` : session.name;
 
   // Özel Sağlık/TSS'te "Ailem (Birden Fazla)" ile toplanan eş/çocuk bilgileri
   // (session.answers.saglik_kisiler) flow.questions'ta karsiligi olmadigi

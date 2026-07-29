@@ -302,6 +302,16 @@
     return i ? (i + ' hocam') : 'Hocam';
   }
   function tamAd(){ return val('ad-soyad'); }
+  // 29.07.2026 eklendi: kullanicinin talebi uzerine - "Başkası İçin" durumunda
+  // (yani formu dolduran kisi kendisi degil, ucuncu bir kisi adina yapiyorsa)
+  // hitapta sadece ilk ad degil TAM isim (isim + soyisim) kullanilir - "Ahmet
+  // hocam" yerine "Ahmet Demir hocam". "Kendim İçin" durumunda (kisi kendi
+  // adina dolduruyor) daha samimi/dogal durdugu icin ilk ad + hocam (hocamMetni)
+  // aynen korunuyor.
+  function hocamMetniTamAd(){
+    const tam = tamAd();
+    return tam ? (tam + ' hocam') : 'Hocam';
+  }
 
   function turkceVowelClass(ch){
     const map = {'a':'ın','ı':'ın','e':'in','i':'in','o':'un','u':'un','ö':'ün','ü':'ün'};
@@ -342,7 +352,7 @@
     setLabel('q6-label', kendim ? 'Uzman mısınız?' : 'Uzman mı?');
     setLabel('q7-label', kendim ? 'Uzmanlık dalınızı belirtir misiniz?' : 'Uzmanlık dalını belirtir misiniz?');
     setLabel('q8-label', kendim ? 'Aktif olarak hasta bakıyor musunuz?' : 'Aktif olarak hasta bakıyor mu?');
-    setLabel('q9-label', kendim ? 'Yıllık hasta sayınızı yaklaşık olarak söyler misiniz?' : 'Yıllık hasta sayısını yaklaşık olarak söyler misiniz?');
+    setLabel('q9-label', kendim ? 'Yıllık ortalama hasta sayınızı söyler misiniz?' : 'Yıllık ortalama hasta sayısını söyler misiniz?');
     setLabel('q10-label', kendim ? 'İş adresinizi paylaşır mısınız?' : 'İş adresini paylaşır mısınız?');
     setLabel('q11-label', kendim ? `${tur} tescil numaranızı paylaşır mısınız?` : `${tur} tescil numarasını paylaşır mısınız?`);
     setLabel('q12-label', kendim ? `${tur} tescil tarihinizi belirtir misiniz? (GG.AA.YYYY)` : `${tur} tescil tarihini belirtir misiniz? (GG.AA.YYYY)`);
@@ -360,7 +370,7 @@
 
     const greeting = document.getElementById('greeting-line');
     if(tam){
-      greeting.textContent = kendim ? `${h}, teşekkürler — devam edelim 👋` : `${h} için devam edelim 👋`;
+      greeting.textContent = kendim ? `${h}, teşekkürler — devam edelim 👋` : `${hocamMetniTamAd()} için devam edelim 👋`;
     } else {
       greeting.textContent = '';
     }

@@ -1291,20 +1291,18 @@ async function gunlukBekleyenIsOzetiKontrolEt() {
 
     let mesaj;
     let logEtiketi;
-    // 28.07.2026 eklendi: kullanicinin talebi uzerine - acik talep/is YOKSA bu
-    // mesaj artik hic gonderilmiyor (eskiden bos gun mesajiyla birlikte her
-    // zaman gonderiliyordu). Bahadır/Enbel'in mesaji hem kendi hem ekip
-    // bolumu icerdigi icin, onlar icin "acik talep yok" durumu HER IKI
-    // bolumun de bos olmasi anlamina gelir - sade danisman icin ise sadece
-    // kendi isleri bos olmasi yeterli (ekip bolumu yok).
-    let gonderilsinMi;
+    // 28.07.2026 eklendi ve DUZELTILDI: kullanicinin talebi mesajin TAMAMEN
+    // atlanmasi degil, sadece "Açık talepleriniz aşağıda, detay görmek
+    // istediğinizi seçin:" kapanis cumlesinin (GUNLUK_OZET_KAPANIS_CUMLESI)
+    // gosterilecek acik bir talep YOKKEN eklenmemesiydi - gunaydin mesaji ve
+    // "bekleyen isiniz yok" bolumu her zaman oldugu gibi gonderilmeye devam
+    // ediyor. Bahadır/Enbel'in mesaji hem kendi hem ekip bolumu icerdigi
+    // icin, onlar icin kapanis cumlesi HER IKI bolumden herhangi biri
+    // doluysa eklenir - sade danisman icin ise sadece kendi isleri doluysa.
+    let kapanisEklensinMi;
 
     if (bahadir && danisman.number === bahadir.telefon) {
-      gonderilsinMi = kisiselIsler.length > 0 || elementerAcikIsler.length > 0;
-      if (!gonderilsinMi) {
-        console.log(`Gunluk bekleyen is ozeti atlandi (acik talep yok): Bahadır`);
-        continue;
-      }
+      kapanisEklensinMi = kisiselIsler.length > 0 || elementerAcikIsler.length > 0;
       const ekipBolumu =
         elementerAcikIsler.length > 0
           ? elementerAcikIsler.map(acikIsSatiriOlustur).join("\n")
@@ -1312,29 +1310,23 @@ async function gunlukBekleyenIsOzetiKontrolEt() {
       mesaj =
         `${gunaydinMesaji}\n\n` +
         `👤 Kendi bekleyen işleriniz:\n${kisiselBolumMetni(kisiselIsler)}\n\n` +
-        `👥 Ekibin elementer bekleyen işleri:\n${ekipBolumu}\n\n` +
-        GUNLUK_OZET_KAPANIS_CUMLESI;
+        `👥 Ekibin elementer bekleyen işleri:\n${ekipBolumu}` +
+        (kapanisEklensinMi ? `\n\n${GUNLUK_OZET_KAPANIS_CUMLESI}` : "");
       logEtiketi = `Bahadır (${kisiselIsler.length} kendi, ${elementerAcikIsler.length} ekip)`;
     } else if (enbel && danisman.number === enbel.telefon) {
-      gonderilsinMi = kisiselIsler.length > 0 || acikLeadler.length > 0;
-      if (!gonderilsinMi) {
-        console.log(`Gunluk bekleyen is ozeti atlandi (acik talep yok): Enbel`);
-        continue;
-      }
+      kapanisEklensinMi = kisiselIsler.length > 0 || acikLeadler.length > 0;
       const ekipBolumu = acikLeadler.length > 0 ? acikLeadler.map(acikIsSatiriOlustur).join("\n") : "Şu an ekipte bekleyen bir iş yok 🎉";
       mesaj =
         `${gunaydinMesaji}\n\n` +
         `👤 Kendi bekleyen işleriniz:\n${kisiselBolumMetni(kisiselIsler)}\n\n` +
-        `👥 Ekibin TÜM bekleyen işleri:\n${ekipBolumu}\n\n` +
-        GUNLUK_OZET_KAPANIS_CUMLESI;
+        `👥 Ekibin TÜM bekleyen işleri:\n${ekipBolumu}` +
+        (kapanisEklensinMi ? `\n\n${GUNLUK_OZET_KAPANIS_CUMLESI}` : "");
       logEtiketi = `Enbel (${kisiselIsler.length} kendi, ${acikLeadler.length} ekip)`;
     } else {
-      gonderilsinMi = kisiselIsler.length > 0;
-      if (!gonderilsinMi) {
-        console.log(`Gunluk bekleyen is ozeti atlandi (acik talep yok): ${danisman.name}`);
-        continue;
-      }
-      mesaj = `${gunaydinMesaji}\n\nBugün bekleyen işleriniz:\n\n${kisiselBolumMetni(kisiselIsler)}\n\n${GUNLUK_OZET_KAPANIS_CUMLESI}`;
+      kapanisEklensinMi = kisiselIsler.length > 0;
+      mesaj =
+        `${gunaydinMesaji}\n\nBugün bekleyen işleriniz:\n\n${kisiselBolumMetni(kisiselIsler)}` +
+        (kapanisEklensinMi ? `\n\n${GUNLUK_OZET_KAPANIS_CUMLESI}` : "");
       logEtiketi = `${danisman.name} (${kisiselIsler.length} iş)`;
     }
 

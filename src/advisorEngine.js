@@ -12,6 +12,7 @@ const { getSession, resetSession } = require("./sessionStore");
 const { sendText, sendButtons, sendList, sendDocument, sendTemplatePozisyonel, mediaIndir } = require("./loggedWhatsapp");
 const leadStore = require("./leadStore");
 const yenilemeStore = require("./yenilemeStore");
+const engelliNumaralarStore = require("./engelliNumaralarStore");
 const dokumanStore = require("./dokumanStore");
 const { dosyaTuruIzinliMi } = require("./izinliDosyaTurleri");
 const { garantiEmekliligeGonder } = require("./eposta");
@@ -1170,7 +1171,16 @@ async function leadDetayGoster(from, session, lead) {
     hatirlatmaMetni;
 
   await sendText(from, detay);
-  await sendButtons(from, "Ne yapmak istersiniz?", ["Not Ekle", "Durum Değiştir", "Hatırlatma Kur"]);
+  // 29.07.2026 eklendi: "🚫 Numarayı Engelle" secenegi eklenince 4 secenege
+  // cikti - WhatsApp'in interaktif DUGME (button_reply) tipi en fazla 3
+  // secenek destekliyor, bu yuzden sendButtons yerine sendList'e (interaktif
+  // LISTE, 10 satira kadar destekler) gecildi.
+  await sendList(from, "Ne yapmak istersiniz?", "Seçin", [
+    "Not Ekle",
+    "Durum Değiştir",
+    "Hatırlatma Kur",
+    "🚫 Numarayı Engelle"
+  ]);
 }
 
 // --- Musteri (sigortali) adina yeni talep olusturma akisi ---
@@ -2950,6 +2960,68 @@ async function handleAdvisorMessage(from, parsed) {
 
   let userText = parsed.type === "text" ? parsed.text.trim() : parsed.interactiveTitle;
 
+  // 29.07.2026 eklendi: kullanicinin talebi uzerine - panele hic girmeden,
+  // dogrudan WhatsApp'tan yazilan serbest metin komutlarla kalici numara
+  // engelleme/kaldirma/listeleme. Sadece Bahadır ve Enbel (YONETICI_NUMARALARI)
+  // kullanabilir - "engelle"/"engel kaldır" gibi genel bir metin komutunun her
+  // danismanda acik olmasi, ilgisiz bir talebin akisinda yanlislikla
+  // tetiklenme riskini artirirdi. Talep detayindaki "🚫 Numarayı Engelle"
+  // menu secenegi (bkz. DANISMAN_LEAD_DETAY case'i) ise TUM danismanlara
+  // acik - o zaten belirli, o an ekranda goruntulenen bir talebe baglidir ve
+  // ayrica bir onay adimi (DANISMAN_LEAD_ENGELLE_ONAY) gerektirir.
+  // Bu blok hangi state'te olunursa olsun (switch'ten ONCE) calisir - "menu"/
+  // "iptal" kisayolunun asagidaki calisma sekliyle AYNI mantik.
+  if (parsed.type === "text" && YONETICI_NUMARALARI.includes(from)) {
+    const kucukMetin = (userText || "").toLocaleLowerCase("tr").trim();
+
+    if (/^engelliler\s*[!.?]?$/.test(kucukMetin)) {
+      const liste = engelliNumaralarStore.tumEngelliNumaralariGetir();
+      if (!liste.length) {
+        await sendText(from, "Şu an engellenmiş bir numara yok. 🎉");
+      } else {
+        const satirlar = liste.map(
+          (k) => `🚫 ${k.numara}${k.not ? ` - ${k.not}` : ""}${k.engelleyenAdi ? ` (${k.engelleyenAdi})` : ""}`
+        );
+        await sendText(from, `Engelli numaralar (${liste.length}):\n\n${satirlar.join("\n")}`);
+      }
+      return;
+    }
+
+    const engelleEslesme = kucukMetin.match(/^engelle\s+(.+)$/);
+    if (engelleEslesme) {
+      const girilenNumara = engelleEslesme[1].trim();
+      if (!telefonGecerliMi(girilenNumara)) {
+        await sendText(
+          from,
+          `Bu numarayı tanıyamadım 🙏 Lütfen "05XX XXX XX XX" formatında yazar mısınız? (Örn: engelle 0532 123 45 67)`
+        );
+        return;
+      }
+      const numara = telefonUluslararasiFormata(girilenNumara);
+      const ekleyen = danismaniBul(from);
+      engelliNumaralarStore.numarayiEngelle(numara, "Komutla engellendi", ekleyen ? ekleyen.name : null);
+      await sendText(
+        from,
+        `🚫 ${numara} numarası kalıcı olarak engellendi. Bu numaradan gelen mesajlara bot artık hiç cevap vermeyecek.\n\nGeri almak isterseniz: "engel kaldır ${girilenNumara}"`
+      );
+      return;
+    }
+
+    const kaldirEslesme = kucukMetin.match(/^engel\s*kaldır\s+(.+)$/);
+    if (kaldirEslesme) {
+      const girilenNumara = kaldirEslesme[1].trim();
+      const numara = telefonGecerliMi(girilenNumara) ? telefonUluslararasiFormata(girilenNumara) : girilenNumara;
+      const kaldirildiMi = engelliNumaralarStore.engeliKaldir(numara);
+      await sendText(
+        from,
+        kaldirildiMi
+          ? `✅ ${numara} numarasının engeli kaldırıldı. Bot bu numaraya artık normal şekilde cevap verecek.`
+          : `${numara} numarası zaten engelli değildi.`
+      );
+      return;
+    }
+  }
+
   // Her zaman "menu"/"iptal"/"geri" ya da bir selamlasma ("merhaba" vb.)
   // yazarak karsilama ekranina donulebilir. Selamlasma kelimelerinin de bu
   // listede olmasi onemli: danisman uzun bir aradan sonra tekrar yazdiginda
@@ -3124,7 +3196,7 @@ async function handleAdvisorMessage(from, parsed) {
     }
 
     case "DANISMAN_LEAD_DETAY": {
-      userText = matchOption(userText, ["Not Ekle", "Durum Değiştir", "Hatırlatma Kur"]) || userText;
+      userText = matchOption(userText, ["Not Ekle", "Durum Değiştir", "Hatırlatma Kur", "🚫 Numarayı Engelle"]) || userText;
       if (userText === "Not Ekle") {
         session.state = "DANISMAN_NOT_BEKLE";
         await sendText(from, "Notunuzu yazar mısınız?");
@@ -3143,7 +3215,45 @@ async function handleAdvisorMessage(from, parsed) {
         );
         return;
       }
+      // 29.07.2026 eklendi: kullanicinin talebi uzerine - bir talebin
+      // musterisinin numarasini, panele hic girmeden dogrudan WhatsApp'tan
+      // KALICI olarak engelleyebilme. Yanlislikla tetiklenmesin diye once
+      // bir onay soruluyor (bkz. DANISMAN_LEAD_ENGELLE_ONAY) - panel.html'deki
+      // ayni ozellik icin kullanilan window.confirm ile AYNI guvenlik onlemi.
+      if (userText === "🚫 Numarayı Engelle") {
+        const lead = leadStore.leadGetir(session.danismanSeciliLeadId);
+        if (!lead) {
+          await devamMenuGoster(from, session);
+          return;
+        }
+        session.state = "DANISMAN_LEAD_ENGELLE_ONAY";
+        await sendButtons(
+          from,
+          `${lead.telefon} (${lead.musteriAdi || "isimsiz"}) numarasını KALICI olarak engellemek istediğinize emin misiniz? Bu numaradan gelen mesajlara bot bir daha asla cevap vermeyecek. Geri almak isterseniz daha sonra "engel kaldır ${lead.telefon}" yazabilirsiniz.`,
+          ["Evet, Engelle", "Vazgeç"]
+        );
+        return;
+      }
       await karsilamaGoster(from, session);
+      return;
+    }
+
+    case "DANISMAN_LEAD_ENGELLE_ONAY": {
+      userText = matchOption(userText, ["Evet, Engelle", "Vazgeç"]) || userText;
+      const lead = leadStore.leadGetir(session.danismanSeciliLeadId);
+      if (userText === "Evet, Engelle" && lead) {
+        const ekleyen = danismaniBul(from);
+        engelliNumaralarStore.numarayiEngelle(lead.telefon, `Talep üzerinden engellendi (${lead.urun})`, ekleyen ? ekleyen.name : null);
+        await sendText(from, `🚫 ${lead.telefon} numarası kalıcı olarak engellendi. Bot bu numaraya bir daha cevap vermeyecek.`);
+        await leadDetayGoster(from, session, lead);
+        return;
+      }
+      if (lead) {
+        await sendText(from, "Vazgeçildi, numara engellenmedi.");
+        await leadDetayGoster(from, session, lead);
+      } else {
+        await devamMenuGoster(from, session);
+      }
       return;
     }
 
