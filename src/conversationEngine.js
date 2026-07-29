@@ -579,6 +579,13 @@ function saglikKisileriOzetSatirlariOlustur(session) {
 const ID_KISA_ETIKET = {
   danisman_gorustu_mu: "Danışmanla Görüştü mü",
   danisman_adi: "Danışman",
+  // 28.07.2026: bu alan daha once bu haritada yoktu - DASK/Konut/Malpraktis'te
+  // "hedef_kisi" musteri akisinda gizli DEGIL (sadece danisman akisinda
+  // gizli), bu yuzden musteri "Başkası İçin" derse kompaktDetayOlustur'da
+  // (panelde/bildirimlerde) cirkin bir sekilde ham id ("hedef_kisi: Başkası
+  // İçin") gorunuyordu - Malpraktis web teklif formu entegrasyonu sirasinda
+  // fark edildi, ayni haritayi kullanan TUM urunler icin duzeltildi.
+  hedef_kisi: "Kime Ait",
   ad_soyad: "İsim Soyisim",
   mulkiyet_durumu: "Mülkiyet",
   police_kimin_uzerine: "Poliçe Kimin Üzerine",

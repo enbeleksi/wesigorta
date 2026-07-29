@@ -1053,10 +1053,12 @@ const KARSILAMA_KAPANIS_REGEX = /\b(hay[ıi]r|yok|te[şs]ekk[üu]r)/i;
 
 async function karsilamaGoster(from, session) {
   const danisman = danismaniBul(from);
+  // 28.07.2026 eklendi: isimden sonra "Bey"/"Hanım" hitabi (kullanicinin talebi).
+  const hitapliIsim = danisman ? flows.danismanHitapliIsim(danisman.name) : "";
   session.state = "DANISMAN_KARSILAMA";
   await sendList(
     from,
-    `${gunSelamlamasi()} ${danisman ? danisman.name : ""}! 👋 Umarım gününüz güzel geçiyordur. WE Sigorta danışman asistanınız hazır — size bugün nasıl yardımcı olabilirim?`,
+    `${gunSelamlamasi()} ${hitapliIsim}! 👋 Umarım gününüz güzel geçiyordur. WE Sigorta danışman asistanınız hazır — size bugün nasıl yardımcı olabilirim?`,
     "Seçin",
     ANA_MENU_SECENEKLERI
   );

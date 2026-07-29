@@ -18,6 +18,7 @@ const { sablonOlustur, sablonDetayGetir, sablonDuzenle } = require("./whatsapp")
 const messageLog = require("./messageLog");
 const leadStore = require("./leadStore");
 const yenilemeStore = require("./yenilemeStore");
+const engelliNumaralarStore = require("./engelliNumaralarStore");
 const dokumanStore = require("./dokumanStore");
 const flows = require("./flows");
 const db = require("./db");
@@ -620,6 +621,10 @@ app.get("/api/panel/conversations/:phone", panelAuth, (req, res) => {
   res.json({
     name: session.name,
     paused: !!session.paused,
+    // 28.07.2026 eklendi: kalici numara engelleme ozelligi (bkz.
+    // engelliNumaralarStore.js) - session.paused'dan FARKLI, kalici bir
+    // "bu numaraya bir daha asla cevap verme" bayragi.
+    engelli: engelliNumaralarStore.numaraEngelliMi(phone),
     messages: messageLog.getMessages(phone)
   });
 });
@@ -687,6 +692,26 @@ app.post("/api/panel/toggle-pause", panelAuth, (req, res) => {
   const session = getSession(to);
   session.paused = !!paused;
   res.json({ ok: true, paused: session.paused });
+});
+
+// 28.07.2026 eklendi: kullanicinin talebi uzerine - herhangi bir numarayi
+// KALICI olarak engelleyip/kaldirabilme (toggle-pause'un GECICI mekanizmasindan
+// bilincli olarak ayri, bkz. engelliNumaralarStore.js). Webhook seviyesindeki
+// kontrol (bkz. app.post("/webhook", ...)) bu store'u okur.
+app.post("/api/panel/toggle-block", panelAuth, (req, res) => {
+  const { to, engelli, not: engelNotu } = req.body;
+  if (!to) return res.status(400).json({ error: "to gerekli" });
+  if (engelli) {
+    engelliNumaralarStore.numarayiEngelle(to, engelNotu || null, req.panelKullanici ? req.panelKullanici.ad : null);
+  } else {
+    engelliNumaralarStore.engeliKaldir(to);
+  }
+  res.json({ ok: true, engelli: engelliNumaralarStore.numaraEngelliMi(to) });
+});
+
+// Panelde "Engelli Numaralar" listesi gosterebilmek icin.
+app.get("/api/panel/engelli-numaralar", panelAuth, (req, res) => {
+  res.json({ numaralar: engelliNumaralarStore.tumEngelliNumaralariGetir() });
 });
 
 // --- Talep takip sistemi (leads) ---
@@ -897,6 +922,18 @@ app.post("/webhook", async (req, res) => {
     }
 
     const from = message.from; // musterinin telefon numarasi
+
+    // 28.07.2026 eklendi: kullanicinin talebi uzerine - kalici olarak
+    // engellenmis bir numaradan gelen mesaj burada, HER SEYDEN once (danisman
+    // ya da musteri akisina hic girmeden, session state'i bile guncellenmeden)
+    // sessizce yoksayilir. Bu, session.paused (panelden tek tikla geri acilan
+    // GECICI devir alma) ile KARISTIRILMAMALI - burasi bilincli ve kalici bir
+    // "bu numaraya bir daha asla cevap verme" karari icin (bkz.
+    // engelliNumaralarStore.js).
+    if (engelliNumaralarStore.numaraEngelliMi(from)) {
+      console.log(`Engelli numaradan gelen mesaj yoksayildi: ${from}`);
+      return;
+    }
 
     // Web hesaplayicidan teklif isteyip PDF indiren bir musteri, daha sonra
     // (30 gun icinde) dogrudan WhatsApp'a yazarsa - ekibe (NOTIFY_NUMBER +
@@ -1254,8 +1291,20 @@ async function gunlukBekleyenIsOzetiKontrolEt() {
 
     let mesaj;
     let logEtiketi;
+    // 28.07.2026 eklendi: kullanicinin talebi uzerine - acik talep/is YOKSA bu
+    // mesaj artik hic gonderilmiyor (eskiden bos gun mesajiyla birlikte her
+    // zaman gonderiliyordu). Bahadır/Enbel'in mesaji hem kendi hem ekip
+    // bolumu icerdigi icin, onlar icin "acik talep yok" durumu HER IKI
+    // bolumun de bos olmasi anlamina gelir - sade danisman icin ise sadece
+    // kendi isleri bos olmasi yeterli (ekip bolumu yok).
+    let gonderilsinMi;
 
     if (bahadir && danisman.number === bahadir.telefon) {
+      gonderilsinMi = kisiselIsler.length > 0 || elementerAcikIsler.length > 0;
+      if (!gonderilsinMi) {
+        console.log(`Gunluk bekleyen is ozeti atlandi (acik talep yok): Bahadır`);
+        continue;
+      }
       const ekipBolumu =
         elementerAcikIsler.length > 0
           ? elementerAcikIsler.map(acikIsSatiriOlustur).join("\n")
@@ -1267,6 +1316,11 @@ async function gunlukBekleyenIsOzetiKontrolEt() {
         GUNLUK_OZET_KAPANIS_CUMLESI;
       logEtiketi = `Bahadır (${kisiselIsler.length} kendi, ${elementerAcikIsler.length} ekip)`;
     } else if (enbel && danisman.number === enbel.telefon) {
+      gonderilsinMi = kisiselIsler.length > 0 || acikLeadler.length > 0;
+      if (!gonderilsinMi) {
+        console.log(`Gunluk bekleyen is ozeti atlandi (acik talep yok): Enbel`);
+        continue;
+      }
       const ekipBolumu = acikLeadler.length > 0 ? acikLeadler.map(acikIsSatiriOlustur).join("\n") : "Şu an ekipte bekleyen bir iş yok 🎉";
       mesaj =
         `${gunaydinMesaji}\n\n` +
@@ -1275,6 +1329,11 @@ async function gunlukBekleyenIsOzetiKontrolEt() {
         GUNLUK_OZET_KAPANIS_CUMLESI;
       logEtiketi = `Enbel (${kisiselIsler.length} kendi, ${acikLeadler.length} ekip)`;
     } else {
+      gonderilsinMi = kisiselIsler.length > 0;
+      if (!gonderilsinMi) {
+        console.log(`Gunluk bekleyen is ozeti atlandi (acik talep yok): ${danisman.name}`);
+        continue;
+      }
       mesaj = `${gunaydinMesaji}\n\nBugün bekleyen işleriniz:\n\n${kisiselBolumMetni(kisiselIsler)}\n\n${GUNLUK_OZET_KAPANIS_CUMLESI}`;
       logEtiketi = `${danisman.name} (${kisiselIsler.length} iş)`;
     }
@@ -1303,7 +1362,8 @@ async function tumVeriyiKaydet() {
     dokumanStore.kaydet().catch((err) => console.error("Dokumanlar kaydedilemedi:", err.message)),
     yenilemeStore.kaydet().catch((err) => console.error("Yenilemeler kaydedilemedi:", err.message)),
     islenenMesajIdleriKaydet().catch((err) => console.error("İşlenen mesaj ID'leri kaydedilemedi:", err.message)),
-    musteriProfilStore.kaydet().catch((err) => console.error("Müşteri profilleri kaydedilemedi:", err.message))
+    musteriProfilStore.kaydet().catch((err) => console.error("Müşteri profilleri kaydedilemedi:", err.message)),
+    engelliNumaralarStore.kaydet().catch((err) => console.error("Engelli numaralar kaydedilemedi:", err.message))
   ]);
 }
 
@@ -1350,6 +1410,7 @@ async function baslat() {
   await guvenliYukle("Yenilemeler", yenilemeStore.yukle);
   await guvenliYukle("Islenmis mesaj ID'leri", islenenMesajIdleriYukle);
   await guvenliYukle("Musteri profilleri", musteriProfilStore.yukle);
+  await guvenliYukle("Engelli numaralar", engelliNumaralarStore.yukle);
 
   app.listen(PORT, () => {
     console.log(`Sunucu ${PORT} portunda calisiyor.`);
@@ -1408,3 +1469,12 @@ baslat();
 // numaranin daha once web'den teklif isteyip istemedigini kontrol etmek
 // icin asagida (app.post("/webhook", ...)) kullaniliyor.
 const teklifYardimcilari = require('./teklifEndpoint')(app, db.pool);
+
+// 28.07.2026 eklendi: Malpraktis icin urun-ozel web teklif formu (GET
+// /teklif/malpraktis - formu servis eder; POST /api/web-teklif/malpraktis -
+// cevaplari alir, dogrular, Bahadır'a/Enbel'e/varsa danışmana bildirim
+// gonderir ve panelde takip edilebilir bir lead olarak kaydeder). Bu,
+// teklifEndpoint.js'teki (ayri bir sitede barinan, secret'li) hesaplayicidan
+// FARKLI bir desen - bu form dogrudan bu sunucu tarafindan servis edildigi
+// icin ayri bir secret/CORS'a ihtiyac yok (ayni origin).
+require('./webTeklifFormlari')(app);

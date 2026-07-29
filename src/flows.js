@@ -635,6 +635,33 @@ const DANISMANLAR = [
   // Yasemin, Simge, Tuğçe - telefon numaralari henuz bizde yok.
 ];
 
+// 28.07.2026 eklendi: danışmanlara/kullanıcıya gönderilen karsilama
+// mesajlarinda isimden sonra "Bey"/"Hanım" hitabi eklemek icin cinsiyet
+// haritasi (kullanicinin talebi uzerine - isimlerden cinsiyet coz cozemedik
+// oldugunda kullanicinin kendisi teyit etti). Yeni bir danisman eklendiginde
+// burasi da guncellenmeli; haritada olmayan bir isim icin hitap eklenmez
+// (guvenli varsayilan: sadece isim gosterilir, hata firlatilmaz).
+const DANISMAN_HITAP = {
+  Enbel: "Bey",
+  Seda: "Hanım",
+  Bahadır: "Bey",
+  Fırat: "Bey",
+  Furkan: "Bey",
+  Şevval: "Hanım",
+  Nilşah: "Hanım",
+  Yasemin: "Hanım",
+  Simge: "Hanım",
+  Tuğçe: "Hanım"
+};
+
+// Bir danisman ismini hitapla birlikte dondurur (orn. "Enbel Bey"). Haritada
+// karsiligi olmayan/bos bir isim gelirse oldugu gibi (hitapsiz) dondurulur.
+function danismanHitapliIsim(isim) {
+  if (!isim) return isim || "";
+  const hitap = DANISMAN_HITAP[isim];
+  return hitap ? `${isim} ${hitap}` : isim;
+}
+
 // Musteriye "hangi danisman" diye sorulurken gosterilen TAM liste (numarasi
 // olsun olmasin tum danismanlar burada gorunur, cunku musteri kiminle
 // gorustugunu soyleyebilmeli - yonlendirme ise sadece yukaridaki DANISMANLAR
@@ -1285,3 +1312,4 @@ module.exports = {
 module.exports.baskasiIcinMi = baskasiIcinMi;
 module.exports.sehirAdiBul = sehirAdiBul;
 module.exports.saglikYetiskinMi = saglikYetiskinMi;
+module.exports.danismanHitapliIsim = danismanHitapliIsim;

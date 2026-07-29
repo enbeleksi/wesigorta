@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hekim Sorumluluk Sigortası (Malpraktis) — Teklif Formu</title>
+<style>
+  :root{
+    --navy:#132F3E;
+    --teal:#1D4A5C;
+    --green:#0E7A5F;
+    --green-light:#E4F3EE;
+    --bg:#EFF4F5;
+    --card:#FFFFFF;
+    --border:#DEE6E8;
+    --text:#132F3E;
+    --muted:#5B7280;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    padding:48px 32px;
+    background:var(--bg);
+    color:var(--text);
+    font-family:"Segoe UI", Aptos, system-ui, -apple-system, sans-serif;
+    line-height:1.5;
+  }
+  .wrap{max-width:760px;margin:0 auto;}
+
+  header.hero{
+    background:linear-gradient(120deg, var(--navy) 0%, var(--teal) 70%, var(--green) 130%);
+    border-radius:16px;
+    padding:36px;
+    color:#fff;
+  }
+  header.hero h1{font-size:24px;line-height:1.3;margin:0 0 12px 0;font-weight:800;}
+  header.hero p{margin:0;color:#DCE8E6;font-size:15px;max-width:600px;}
+  .eyebrow{text-transform:uppercase;font-size:12px;letter-spacing:.08em;font-weight:700;color:#F2B441;margin-bottom:14px;}
+
+  .card{background:var(--card);border-radius:16px;padding:32px;margin-top:24px;box-shadow:0 1px 2px rgba(19,47,62,0.05);}
+  .section-label{text-transform:uppercase;font-size:12px;letter-spacing:.06em;font-weight:700;color:var(--navy);margin-bottom:10px;}
+
+  .question{margin-bottom:26px;padding-bottom:26px;border-bottom:1px solid var(--border);}
+  .question:last-child{border-bottom:none;margin-bottom:0;padding-bottom:0;}
+  .question.hidden{display:none;}
+  .qnum{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:var(--navy);color:#fff;font-size:12px;font-weight:700;margin-right:8px;flex:none;}
+  label.field-title{font-size:14px;font-weight:700;color:var(--navy);display:flex;align-items:flex-start;gap:0;margin-bottom:10px;}
+  .field-hint{font-size:12px;color:var(--muted);margin-top:6px;}
+  .field-error{font-size:12px;color:#C0392B;margin-top:6px;display:none;}
+  .field-error.show{display:block;}
+
+  .pillgroup{display:flex;gap:6px;background:#F1F5F6;padding:4px;border-radius:12px;max-width:360px;}
+  .pill{flex:1;text-align:center;padding:10px 14px;border-radius:9px;font-size:14px;font-weight:600;color:var(--navy);cursor:pointer;border:none;background:transparent;transition:background .15s, color .15s;}
+  .pill.active{background:var(--navy);color:#fff;}
+  .pill.active.green{background:var(--green);}
+
+  select, input[type=text], input[type=number]{width:100%;padding:12px 14px;border-radius:9px;border:1px solid var(--border);font-size:15px;font-family:inherit;color:var(--text);background:#fff;}
+  select:focus, input:focus{outline:2px solid var(--green);outline-offset:1px;}
+
+  #rest-of-form.hidden{display:none;}
+
+  .detected-box{background:var(--green-light);border:1px solid #CDE7DC;border-radius:9px;padding:10px 14px;font-size:14px;color:var(--navy);display:flex;justify-content:space-between;align-items:center;gap:10px;}
+  .detected-box a{color:var(--green);font-weight:700;font-size:13px;cursor:pointer;white-space:nowrap;}
+
+  .consent{display:flex;gap:10px;align-items:flex-start;background:#F7FAFA;border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-top:20px;font-size:13px;color:var(--muted);}
+  .consent input{width:auto;margin-top:3px;}
+
+  .btn{padding:14px 22px;border-radius:9px;font-weight:700;font-size:15px;text-decoration:none;display:inline-block;text-align:center;border:none;cursor:pointer;width:100%;}
+  .btn-primary{background:var(--green);color:#fff;margin-top:20px;}
+
+  .info-box{
+    border:1px solid var(--border);
+    border-radius:12px;
+    padding:18px 20px;
+    background:#fff;
+    font-size:16px;
+    font-weight:600;
+    color:var(--muted);
+    line-height:1.5;
+  }
+  .info-box p{margin:0;}
+  .crosssell a{color:var(--green);font-weight:700;}
+
+  details.legal{margin-top:24px;font-size:13px;color:var(--muted);}
+  details.legal summary{cursor:pointer;font-weight:700;color:var(--navy);font-size:13px;}
+  details.legal ul{padding-left:18px;}
+  details.legal li{margin-bottom:8px;}
+
+  footer{margin-top:28px;text-align:center;font-size:12px;color:var(--muted);}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <div class="eyebrow">HEKİM SORUMLULUK SİGORTASI · TEKLİF FORMU</div>
+    <h1 id="intro-title">Hekim Sorumluluk Sigortası</h1>
+    <p id="intro-text">Hekim Sorumluluk Sigortası, mesleki uygulamalarınız sırasında oluşabilecek olası taleplere karşı sizi güvence altına alır. Teklifinizi hazırlamak için birkaç bilgi alalım. 🩺</p>
+  </header>
+
+  <form class="card" id="teklif-form">
+    <div class="section-label">Teklif İçin Bilgilerinizi Girin</div>
+
+    <div class="question" id="q1">
+      <label class="field-title"><span class="qnum">1</span>Daha önce acentemiz bünyesindeki danışmanlarımızdan biriyle görüşme fırsatınız oldu mu?</label>
+      <div class="pillgroup" data-question="gorusme">
+        <button type="button" class="pill" data-value="evet">Evet</button>
+        <button type="button" class="pill" data-value="hayir">Hayır</button>
+      </div>
+    </div>
+
+    <div class="question hidden" id="q2">
+      <label class="field-title"><span class="qnum">2</span>Hangi danışmanımızla görüşme fırsatınız oldu?</label>
+      <select id="danisman-adi">
+        <option value="">Seçiniz…</option>
+        <option>Enbel</option><option>Seda</option><option>Bahadır</option><option>Fırat</option>
+        <option>Furkan</option><option>Şevval</option><option>Nilşah</option><option>Yasemin</option>
+        <option>Simge</option><option>Tuğçe</option>
+      </select>
+    </div>
+
+    <div class="question" id="q3">
+      <label class="field-title"><span class="qnum">3</span>Hekim Sorumluluk Sigortası poliçesini kendiniz için mi yaptıracaksınız yoksa bir başkası için mi?</label>
+      <div class="pillgroup" data-question="hedefKisi">
+        <button type="button" class="pill" data-value="Kendim İçin">Kendim İçin</button>
+        <button type="button" class="pill" data-value="Başkası İçin">Başkası İçin</button>
+      </div>
+    </div>
+
+    <div id="rest-of-form" class="hidden">
+
+      <div class="question" id="q4">
+        <label class="field-title"><span class="qnum">4</span><span id="q4-label"></span></label>
+        <input type="text" id="ad-soyad" placeholder="Ad Soyad">
+      </div>
+
+      <div class="question" id="q-tel">
+        <label class="field-title"><span class="qnum">📞</span>Size ulaşabileceğimiz bir telefon numarası paylaşır mısınız?</label>
+        <input type="text" id="telefon" placeholder="05XX XXX XX XX" inputmode="tel">
+        <p class="field-error" id="q-tel-error">Girilen numara geçerli görünmüyor, lütfen tekrar yazar mısınız? (Örn: 05551234567)</p>
+      </div>
+
+      <p class="field-hint" id="greeting-line" style="margin:-18px 0 22px 0;font-size:13px;font-weight:600;color:var(--green);"></p>
+
+      <div class="question" id="q5">
+        <label class="field-title"><span class="qnum">5</span><span id="q5-label"></span></label>
+        <div class="pillgroup" data-question="asistan">
+          <button type="button" class="pill" data-value="evet">Evet</button>
+          <button type="button" class="pill" data-value="hayir">Hayır</button>
+        </div>
+      </div>
+
+      <div class="question hidden" id="q6">
+        <label class="field-title"><span class="qnum">6</span><span id="q6-label"></span></label>
+        <div class="pillgroup" data-question="uzman">
+          <button type="button" class="pill" data-value="evet">Evet</button>
+          <button type="button" class="pill" data-value="hayir">Hayır</button>
+        </div>
+      </div>
+
+      <div class="question hidden" id="q7">
+        <label class="field-title"><span class="qnum">7</span><span id="q7-label"></span></label>
+        <input type="text" id="uzmanlik-dali" list="brans-list" placeholder="Uzmanlık dalını yazın veya listeden seçin">
+        <datalist id="brans-list">
+          <option value="Aile Hekimliği"><option value="Genel Cerrahi"><option value="Kadın Hastalıkları ve Doğum">
+          <option value="Ortopedi ve Travmatoloji"><option value="Kalp ve Damar Cerrahisi"><option value="Göğüs Cerrahisi">
+          <option value="Beyin ve Sinir Cerrahisi"><option value="Acil Tıp"><option value="Anesteziyoloji ve Reanimasyon">
+          <option value="Plastik, Rekonstrüktif ve Estetik Cerrahi"><option value="Çocuk Cerrahisi"><option value="İç Hastalıkları (Dahiliye)">
+          <option value="Kardiyoloji"><option value="Göz Hastalıkları"><option value="Kulak Burun Boğaz Hastalıkları">
+          <option value="Nöroloji"><option value="Radyoloji"><option value="Üroloji"><option value="Enfeksiyon Hastalıkları">
+          <option value="Dermatoloji (Deri ve Zührevi Hastalıklar)"><option value="Fiziksel Tıp ve Rehabilitasyon">
+          <option value="Romatoloji"><option value="Geriatri"><option value="Psikiyatri"><option value="Çocuk Sağlığı ve Hastalıkları">
+          <option value="Diş Tabibi (Genel Diş Hekimliği)"><option value="Ağız, Diş ve Çene Cerrahisi"><option value="Ortodonti">
+          <option value="Endodonti"><option value="Periodontoloji"><option value="Protetik Diş Tedavisi">
+          <option value="Restoratif Diş Tedavisi"><option value="Pedodonti (Çocuk Diş Hekimliği)"><option value="Ağız, Diş ve Çene Radyolojisi">
+        </datalist>
+        <p class="field-hint">Listede göremediğiniz bir branşsanız doğrudan yazabilirsiniz.</p>
+      </div>
+
+      <div class="question" id="q8">
+        <label class="field-title"><span class="qnum">8</span><span id="q8-label"></span></label>
+        <div class="pillgroup" data-question="hastaBakiyor">
+          <button type="button" class="pill" data-value="evet">Evet</button>
+          <button type="button" class="pill" data-value="hayir">Hayır</button>
+        </div>
+      </div>
+
+      <div class="question hidden" id="q9">
+        <label class="field-title"><span class="qnum">9</span><span id="q9-label"></span></label>
+        <input type="text" id="yillik-hasta" placeholder="Örn. 500" inputmode="numeric">
+        <p class="field-error" id="q9-error">Lütfen hasta sayısını sadece rakamla yazar mısınız? (Örn: 500)</p>
+      </div>
+
+      <div class="question" id="q10">
+        <label class="field-title"><span class="qnum">10</span><span id="q10-label"></span></label>
+        <input type="text" id="is-adresi" placeholder="İş adresi">
+      </div>
+
+      <div class="question" id="q11">
+        <label class="field-title"><span class="qnum">11</span><span id="q11-label"></span></label>
+        <input type="text" id="tescil-no" placeholder="Tescil numarası">
+      </div>
+
+      <div class="question" id="q12">
+        <label class="field-title"><span class="qnum">12</span><span id="q12-label"></span></label>
+        <input type="text" id="tescil-tarihi" placeholder="GG.AA.YYYY">
+        <p class="field-error" id="q12-error">Lütfen tarihi GG.AA.YYYY formatında yazar mısınız? (Örn: 15.05.2015)</p>
+      </div>
+
+      <div class="question" id="q13">
+        <label class="field-title"><span class="qnum">13</span><span id="q13-label"></span></label>
+        <div class="pillgroup" data-question="ettirenTuru">
+          <button type="button" class="pill" data-value="Serbest Çalışan">Serbest Çalışan</button>
+          <button type="button" class="pill" data-value="Kamu Çalışanı">Kamu Çalışanı</button>
+        </div>
+      </div>
+
+      <div class="question" id="q14">
+        <label class="field-title"><span class="qnum">14</span><span id="q14-label"></span></label>
+        <input type="text" id="saglik-kurumu" placeholder="Sağlık kurumu adı">
+      </div>
+
+      <div class="question" id="q15">
+        <label class="field-title"><span class="qnum">15</span><span id="q15-label"></span></label>
+        <div id="sehir-input-wrap"><input type="text" id="sehir" placeholder="Şehir"></div>
+        <div id="sehir-detected-wrap" class="detected-box" style="display:none;">
+          <span id="sehir-detected-text"></span>
+          <a id="sehir-degistir">değiştir</a>
+        </div>
+      </div>
+
+      <div class="question" id="q16">
+        <label class="field-title"><span class="qnum">16</span><span id="q16-label"></span></label>
+        <input type="text" id="tc-no" placeholder="T.C. Kimlik Numarası" maxlength="11" inputmode="numeric">
+        <p class="field-error" id="q16-error">Girdiğiniz T.C. kimlik numarası geçerli görünmüyor, lütfen 11 haneli olarak tekrar yazar mısınız?</p>
+      </div>
+
+      <label class="consent">
+        <input type="checkbox" id="consent-check">
+        <span>Yukarıdaki bilgilerin, teklif hazırlanması amacıyla WhatsApp üzerinden acenteye iletilmesini kabul ediyorum (KVKK kapsamında rızam alınmıştır).</span>
+      </label>
+
+      <button type="button" class="btn btn-primary" id="submit-btn">WhatsApp ile Teklif İçin Gönder</button>
+      <p class="field-hint" id="validation-msg" style="text-align:center;color:#C0392B;"></p>
+    </div>
+
+    <div id="success-panel" class="hidden" style="text-align:center;padding:12px 0;">
+      <div style="font-size:40px;margin-bottom:12px;">✅</div>
+      <div style="font-size:17px;font-weight:700;color:var(--navy);margin-bottom:8px;">Teklif talebiniz alındı!</div>
+      <p style="color:var(--muted);font-size:14px;margin:0;">Danışmanlarımız en kısa sürede sizinle WhatsApp veya telefon üzerinden iletişime geçecek. Bizi tercih ettiğiniz için teşekkür ederiz. 🙏</p>
+    </div>
+  </form>
+
+  <details class="legal">
+    <summary>Bilgilendirme</summary>
+    <ul>
+      <li>Bu form, Hekim Sorumluluk (Tıbbi Kötü Uygulamaya İlişkin Zorunlu Mali Sorumluluk) Sigortası için teklif talebi toplamak amacıyla hazırlanmıştır; bir sigorta teklifi veya sözleşmesi değildir.</li>
+      <li>Gönder butonuna bastığınızda, doldurduğunuz bilgiler WhatsApp üzerinden acentemize iletilir; mesajı göndermeden önce içeriği görüp düzenleyebilirsiniz.</li>
+      <li>Kesin teminat kapsamı, risk grubu ve prim tutarı danışmanımız tarafından, sigorta şirketinin güncel tarifesine göre size özel olarak hazırlanır.</li>
+    </ul>
+  </details>
+
+  <div class="card" id="crosssell-card">
+    <div class="section-label">PRİM İADELİ HAYAT SİGORTASI <span style="text-transform:none;font-weight:400;color:var(--muted);">(bilginize)</span></div>
+    <div class="info-box">
+      <p>🩺 Bu arada, doktorlarımızın ülkemizde en yüksek vergi dilimlerinde yer aldığını biliyoruz. Prim İadeli Hayat Sigortamız ile ödediğiniz primler ciddi bir vergi avantajı sağlıyor, üstelik vade sonunda bir talebiniz olmazsa ödediğiniz primler aynen size geri iade ediliyor. 💰</p>
+    </div>
+    <p class="field-hint">Detaylı bilgi ve teklif için: <a href="https://www.wesigorta.com.tr/primiadeli/" target="_blank" rel="noopener">wesigorta.com.tr/primiadeli</a> adresini ziyaret edebilirsiniz.</p>
+  </div>
+
+  <footer>Bu sayfa bilgilendirme ve teklif talebi amaçlıdır, sigorta sözleşmesi yerine geçmez.</footer>
+</div>
+
+<script>
+  // Bu form artik kendi sunucumuz (whatsapp-sigorta-bot) uzerinden ayni-origin
+  // bir POST ile gonderiliyor - musterinin kendi WhatsApp'ini acip mesaji
+  // KENDISININ gondermesine gerek YOK. Sunucu, cevaplari alir almaz Bahadır'a,
+  // Enbel'e ve (varsa) belirtilen danışmana otomatik WhatsApp bildirimi yollar
+  // ve talebi panelde takip edilebilir bir "iş" (lead) olarak kaydeder - tipki
+  // botun kendisinden gelen bir Malpraktis talebi gibi.
+  const GONDERIM_ENDPOINT = "/api/web-teklif/malpraktis";
+  const ILLER = ["Adana","Adıyaman","Afyonkarahisar","Ağrı","Amasya","Ankara","Antalya","Artvin","Aydın","Balıkesir",
+    "Bilecik","Bingöl","Bitlis","Bolu","Burdur","Bursa","Çanakkale","Çankırı","Çorum","Denizli","Diyarbakır","Edirne",
+    "Elazığ","Erzincan","Erzurum","Eskişehir","Gaziantep","Giresun","Gümüşhane","Hakkari","Hatay","Isparta","Mersin",
+    "İstanbul","İzmir","Kars","Kastamonu","Kayseri","Kırklareli","Kırşehir","Kocaeli","Konya","Kütahya","Malatya",
+    "Manisa","Kahramanmaraş","Mardin","Muğla","Muş","Nevşehir","Niğde","Ordu","Rize","Sakarya","Samsun","Siirt",
+    "Sinop","Sivas","Tekirdağ","Tokat","Trabzon","Tunceli","Şanlıurfa","Uşak","Van","Yozgat","Zonguldak","Aksaray",
+    "Bayburt","Karaman","Kırıkkale","Batman","Şırnak","Bartın","Ardahan","Iğdır","Yalova","Karabük","Kilis","Osmaniye","Düzce"];
+
+  const state = { gorusme:null, hedefKisi:null, asistan:null, uzman:null, hastaBakiyor:null, ettirenTuru:null, sehirOto:null };
+
+  function val(id){ const el=document.getElementById(id); return el ? el.value.trim() : ''; }
+  function setLabel(id, text){ document.getElementById(id).textContent = text; }
+  function show(id, visible){ document.getElementById(id).classList.toggle('hidden', !visible); }
+
+  function ilkIsim(){
+    const v = val('ad-soyad');
+    return v ? v.split(/\s+/)[0] : '';
+  }
+  function hocamMetni(){
+    const i = ilkIsim();
+    return i ? (i + ' hocam') : 'Hocam';
+  }
+  function tamAd(){ return val('ad-soyad'); }
+
+  function turkceVowelClass(ch){
+    const map = {'a':'ın','ı':'ın','e':'in','i':'in','o':'un','u':'un','ö':'ün','ü':'ün'};
+    return map[ch];
+  }
+  function iyelikEki(kelime){
+    const lower = kelime.toLocaleLowerCase('tr-TR');
+    let ek = 'ın';
+    let endsInVowel = false;
+    for(let i=lower.length-1;i>=0;i--){
+      const cls = turkceVowelClass(lower[i]);
+      if(cls){ ek = cls; endsInVowel = (i === lower.length-1); break; }
+    }
+    return (endsInVowel ? 'n' : '') + ek;
+  }
+  function isimIyelik(fullName){
+    const words = fullName.trim().split(/\s+/);
+    const lastWord = words[words.length-1] || '';
+    return fullName + "'" + iyelikEki(lastWord);
+  }
+
+  function tescilTuru(){
+    const uzmanEfektif = (state.asistan === 'hayir' && state.uzman === 'evet');
+    return uzmanEfektif ? 'Uzmanlık' : 'Diploma';
+  }
+
+  function renderLabels(){
+    const kendim = state.hedefKisi === 'Kendim İçin';
+    const h = hocamMetni();
+    const tam = tamAd();
+    const tur = tescilTuru();
+
+    setLabel('q4-label', kendim
+      ? 'İsim ve soyisminizi paylaşır mısınız?'
+      : 'Sigortayı kimin adına yaptıracaksınız? İsim ve soyismini paylaşır mısınız?');
+
+    setLabel('q5-label', kendim ? 'Asistan mısınız?' : 'Asistan mı?');
+    setLabel('q6-label', kendim ? 'Uzman mısınız?' : 'Uzman mı?');
+    setLabel('q7-label', kendim ? 'Uzmanlık dalınızı belirtir misiniz?' : 'Uzmanlık dalını belirtir misiniz?');
+    setLabel('q8-label', kendim ? 'Aktif olarak hasta bakıyor musunuz?' : 'Aktif olarak hasta bakıyor mu?');
+    setLabel('q9-label', kendim ? 'Yıllık hasta sayınızı yaklaşık olarak söyler misiniz?' : 'Yıllık hasta sayısını yaklaşık olarak söyler misiniz?');
+    setLabel('q10-label', kendim ? 'İş adresinizi paylaşır mısınız?' : 'İş adresini paylaşır mısınız?');
+    setLabel('q11-label', kendim ? `${tur} tescil numaranızı paylaşır mısınız?` : `${tur} tescil numarasını paylaşır mısınız?`);
+    setLabel('q12-label', kendim ? `${tur} tescil tarihinizi belirtir misiniz? (GG.AA.YYYY)` : `${tur} tescil tarihini belirtir misiniz? (GG.AA.YYYY)`);
+    setLabel('q13-label', kendim ? 'Sigorta ettiren türünüz nedir?' : 'Sigorta ettiren türü nedir?');
+    setLabel('q14-label', kendim ? 'Bağlı olduğunuz sağlık kurumunu söyler misiniz?' : 'Bağlı olduğu sağlık kurumunu söyler misiniz?');
+    setLabel('q15-label', kendim ? 'Hangi şehirden bize ulaştığınızı öğrenebilir miyim?' : `${tam || 'Belirttiğiniz kişi'} hangi şehirde bulunuyor, öğrenebilir miyim?`);
+
+    if(kendim){
+      setLabel('q16-label', 'Son olarak T.C. kimlik numaranızı yazar mısınız?');
+    } else if(tam){
+      setLabel('q16-label', `Son olarak ${isimIyelik(tam)} T.C. kimlik numarasını yazar mısınız?`);
+    } else {
+      setLabel('q16-label', 'Son olarak sigortalının T.C. kimlik numarasını yazar mısınız?');
+    }
+
+    const greeting = document.getElementById('greeting-line');
+    if(tam){
+      greeting.textContent = kendim ? `${h}, teşekkürler — devam edelim 👋` : `${h} için devam edelim 👋`;
+    } else {
+      greeting.textContent = '';
+    }
+  }
+
+  function updateVisibility(){
+    show('q2', state.gorusme === 'evet');
+    show('rest-of-form', !!state.hedefKisi);
+    show('q6', state.asistan === 'hayir');
+    const isUzmanOrAsistan = state.asistan === 'evet' || state.uzman === 'evet';
+    show('q7', isUzmanOrAsistan);
+    show('q9', state.hastaBakiyor === 'evet');
+    renderLabels();
+  }
+
+  function setupPillGroup(container){
+    container.addEventListener('click', (e) => {
+      const btn = e.target.closest('.pill');
+      if(!btn) return;
+      [...container.children].forEach(p => p.classList.remove('active','green'));
+      btn.classList.add('active','green');
+      const q = container.dataset.question;
+      state[q] = btn.dataset.value;
+      updateVisibility();
+    });
+  }
+  document.querySelectorAll('.pillgroup').forEach(setupPillGroup);
+  document.getElementById('ad-soyad').addEventListener('input', renderLabels);
+
+  // Şehir auto-detect from sağlık kurumu answer
+  const saglikKurumuInput = document.getElementById('saglik-kurumu');
+  saglikKurumuInput.addEventListener('blur', () => {
+    const v = val('saglik-kurumu');
+    if(!v){ return; }
+    const found = ILLER.find(il => v.toLocaleLowerCase('tr-TR').includes(il.toLocaleLowerCase('tr-TR')));
+    if(found){
+      state.sehirOto = found;
+      document.getElementById('sehir').value = found;
+      document.getElementById('sehir-input-wrap').style.display = 'none';
+      document.getElementById('sehir-detected-wrap').style.display = 'flex';
+      document.getElementById('sehir-detected-text').textContent = `Şehir "${found}" olarak sağlık kurumu bilgisinden otomatik algılandı.`;
+    }
+  });
+  document.getElementById('sehir-degistir').addEventListener('click', () => {
+    state.sehirOto = null;
+    document.getElementById('sehir-input-wrap').style.display = 'block';
+    document.getElementById('sehir-detected-wrap').style.display = 'none';
+  });
+
+  // Inline validations
+  document.getElementById('yillik-hasta').addEventListener('blur', function(){
+    const v = this.value.trim();
+    document.getElementById('q9-error').classList.toggle('show', v !== '' && !/^\d+$/.test(v));
+  });
+  document.getElementById('tescil-tarihi').addEventListener('blur', function(){
+    const v = this.value.trim();
+    document.getElementById('q12-error').classList.toggle('show', v !== '' && !/^\d{2}\.\d{2}\.\d{4}$/.test(v));
+  });
+  document.getElementById('tc-no').addEventListener('blur', function(){
+    const v = this.value.trim();
+    document.getElementById('q16-error').classList.toggle('show', v !== '' && !/^\d{11}$/.test(v));
+  });
+  document.getElementById('telefon').addEventListener('blur', function(){
+    const v = this.value.trim().replace(/[\s()\-]/g, '');
+    document.getElementById('q-tel-error').classList.toggle('show', v !== '' && !/^(\+90|90|0)?5\d{9}$/.test(v));
+  });
+
+  function isVisible(id){ return !document.getElementById(id).classList.contains('hidden'); }
+
+  document.getElementById('submit-btn').addEventListener('click', async () => {
+    const msg = document.getElementById('validation-msg');
+    msg.textContent = '';
+
+    const telefonTemiz = val('telefon').replace(/[\s()\-]/g, '');
+    const required = [
+      {id:'q1', ok: !!state.gorusme},
+      {id:'q3', ok: !!state.hedefKisi},
+      {id:'q4', ok: !!val('ad-soyad')},
+      {id:'q-tel', ok: /^(\+90|90|0)?5\d{9}$/.test(telefonTemiz)},
+      {id:'q5', ok: !!state.asistan},
+      {id:'q8', ok: !!state.hastaBakiyor},
+      {id:'q10', ok: !!val('is-adresi')},
+      {id:'q11', ok: !!val('tescil-no')},
+      {id:'q12', ok: !!val('tescil-tarihi') && /^\d{2}\.\d{2}\.\d{4}$/.test(val('tescil-tarihi'))},
+      {id:'q13', ok: !!state.ettirenTuru},
+      {id:'q14', ok: !!val('saglik-kurumu')},
+      {id:'q16', ok: /^\d{11}$/.test(val('tc-no'))},
+    ];
+    if(isVisible('q2')) required.push({id:'q2', ok: !!val('danisman-adi')});
+    if(isVisible('q6')) required.push({id:'q6', ok: !!state.uzman});
+    if(isVisible('q7')) required.push({id:'q7', ok: !!val('uzmanlik-dali')});
+    if(isVisible('q9')) required.push({id:'q9', ok: /^\d+$/.test(val('yillik-hasta'))});
+    if(!state.sehirOto) required.push({id:'q15', ok: !!val('sehir')});
+
+    const missing = required.filter(r => !r.ok);
+    if(missing.length){
+      msg.textContent = 'Lütfen işaretli tüm soruları eksiksiz ve doğru formatta yanıtlayın.';
+      document.getElementById(missing[0].id).scrollIntoView({behavior:'smooth', block:'center'});
+      return;
+    }
+    if(!document.getElementById('consent-check').checked){
+      msg.textContent = 'Devam etmek için KVKK onay kutusunu işaretlemeniz gerekiyor.';
+      return;
+    }
+
+    const payload = {
+      danisman_gorustu_mu: state.gorusme === 'evet' ? 'Evet' : 'Hayır',
+      danisman_adi: isVisible('q2') ? val('danisman-adi') : null,
+      hedef_kisi: state.hedefKisi,
+      ad_soyad: val('ad-soyad'),
+      telefon: telefonTemiz,
+      asistan_mi: state.asistan === 'evet' ? 'Evet' : 'Hayır',
+      uzman_mi: isVisible('q6') ? (state.uzman === 'evet' ? 'Evet' : 'Hayır') : null,
+      uzmanlik_dali: isVisible('q7') ? val('uzmanlik-dali') : null,
+      hasta_bakiyor_mu: state.hastaBakiyor === 'evet' ? 'Evet' : 'Hayır',
+      yillik_hasta_sayisi: isVisible('q9') ? val('yillik-hasta') : null,
+      is_adresi: val('is-adresi'),
+      tescil_no: val('tescil-no'),
+      tescil_tarihi: val('tescil-tarihi'),
+      sigorta_ettiren_turu: state.ettirenTuru,
+      saglik_kurumu: val('saglik-kurumu'),
+      sehir: val('sehir'),
+      tc_kimlik: val('tc-no')
+    };
+
+    const btn = document.getElementById('submit-btn');
+    btn.disabled = true;
+    btn.textContent = 'Gönderiliyor...';
+
+    try {
+      const yanit = await fetch(GONDERIM_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const sonuc = await yanit.json().catch(() => ({}));
+      if(!yanit.ok || !sonuc.ok){
+        throw new Error(sonuc.hata || ('HTTP ' + yanit.status));
+      }
+      document.getElementById('rest-of-form').classList.add('hidden');
+      document.getElementById('success-panel').classList.remove('hidden');
+    } catch (e) {
+      msg.textContent = 'Talebiniz gönderilirken bir sorun oluştu 😕 Lütfen birazdan tekrar deneyin.';
+      btn.disabled = false;
+      btn.textContent = 'WhatsApp ile Teklif İçin Gönder';
+    }
+  });
+
+  updateVisibility();
+</script>
+</body>
+</html>

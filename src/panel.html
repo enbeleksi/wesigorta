@@ -26,6 +26,9 @@
   #pauseBtn { padding: 8px 14px; border-radius: 6px; border: none; cursor: pointer; font-size: 13px; }
   #pauseBtn.paused { background: #7A1F35; color: #fff; }
   #pauseBtn.active { background: #E1E6EC; }
+  #blockBtn { padding: 8px 14px; border-radius: 6px; border: none; cursor: pointer; font-size: 13px; margin-left: 8px; }
+  #blockBtn.blocked { background: #B00020; color: #fff; }
+  #blockBtn.unblocked { background: #E1E6EC; }
   #messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 8px; }
   .msg { max-width: 60%; padding: 8px 12px; border-radius: 10px; font-size: 14px; line-height: 1.4; }
   .msg.in { align-self: flex-start; background: #fff; border: 1px solid #eee; }
@@ -171,7 +174,10 @@ function renderMain(phone, data) {
   main.innerHTML = `
     <div id="chatHeader">
       <h3>${data.name || phone} <span style="color:#999; font-weight:400;">(${phone})</span></h3>
-      <button id="pauseBtn" class="${data.paused ? 'paused' : 'active'}">${data.paused ? 'Bot Duraklatildi - Devam Ettir' : 'Bot Aktif - Duraklat'}</button>
+      <div>
+        <button id="pauseBtn" class="${data.paused ? 'paused' : 'active'}">${data.paused ? 'Bot Duraklatildi - Devam Ettir' : 'Bot Aktif - Duraklat'}</button>
+        <button id="blockBtn" class="${data.engelli ? 'blocked' : 'unblocked'}">${data.engelli ? '🚫 Engelli - Engeli Kaldır' : '🚫 Numarayı Engelle'}</button>
+      </div>
     </div>
     <div id="messages"></div>
     <div id="composer">
@@ -195,6 +201,24 @@ function renderMain(phone, data) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ to: phone, paused: !data.paused })
+    });
+    selectConversation(phone);
+  };
+
+  // 28.07.2026 eklendi: pauseBtn'den (gecici, panelden tek tikla geri
+  // acilir) BILINCLI olarak farkli - bu numarayi KALICI olarak engeller,
+  // bot bu numaraya bir daha ASLA cevap vermez (webhook seviyesinde
+  // durdurulur). Yanlislikla tetiklenmesin diye bir onay istiyoruz.
+  document.getElementById('blockBtn').onclick = async () => {
+    const yeniDurum = !data.engelli;
+    if (yeniDurum) {
+      const onay = window.confirm(`${phone} numarasini KALICI olarak engellemek istediginize emin misiniz? Bu numaradan gelen mesajlara bot bir daha asla cevap vermeyecek. (Daha sonra bu ekrandan engeli kaldirabilirsiniz.)`);
+      if (!onay) return;
+    }
+    await fetch('/api/panel/toggle-block', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to: phone, engelli: yeniDurum })
     });
     selectConversation(phone);
   };
