@@ -58,6 +58,7 @@
   select:focus, input:focus{outline:2px solid var(--green);outline-offset:1px;}
 
   #rest-of-form.hidden{display:none;}
+  #success-panel.hidden{display:none;}
 
   .detected-box{background:var(--green-light);border:1px solid #CDE7DC;border-radius:9px;padding:10px 14px;font-size:14px;color:var(--navy);display:flex;justify-content:space-between;align-items:center;gap:10px;}
   .detected-box a{color:var(--green);font-weight:700;font-size:13px;cursor:pointer;white-space:nowrap;}
@@ -101,26 +102,8 @@
   <form class="card" id="teklif-form">
     <div class="section-label">Teklif İçin Bilgilerinizi Girin</div>
 
-    <div class="question" id="q1">
-      <label class="field-title"><span class="qnum">1</span>Daha önce acentemiz bünyesindeki danışmanlarımızdan biriyle görüşme fırsatınız oldu mu?</label>
-      <div class="pillgroup" data-question="gorusme">
-        <button type="button" class="pill" data-value="evet">Evet</button>
-        <button type="button" class="pill" data-value="hayir">Hayır</button>
-      </div>
-    </div>
-
-    <div class="question hidden" id="q2">
-      <label class="field-title"><span class="qnum">2</span>Hangi danışmanımızla görüşme fırsatınız oldu?</label>
-      <select id="danisman-adi">
-        <option value="">Seçiniz…</option>
-        <option>Enbel</option><option>Seda</option><option>Bahadır</option><option>Fırat</option>
-        <option>Furkan</option><option>Şevval</option><option>Nilşah</option><option>Yasemin</option>
-        <option>Simge</option><option>Tuğçe</option>
-      </select>
-    </div>
-
     <div class="question" id="q3">
-      <label class="field-title"><span class="qnum">3</span>Hekim Sorumluluk Sigortası poliçesini kendiniz için mi yaptıracaksınız yoksa bir başkası için mi?</label>
+      <label class="field-title"><span class="qnum">1</span>Hekim Sorumluluk Sigortası poliçesini kendiniz için mi yaptıracaksınız yoksa bir başkası için mi?</label>
       <div class="pillgroup" data-question="hedefKisi">
         <button type="button" class="pill" data-value="Kendim İçin">Kendim İçin</button>
         <button type="button" class="pill" data-value="Başkası İçin">Başkası İçin</button>
@@ -130,7 +113,7 @@
     <div id="rest-of-form" class="hidden">
 
       <div class="question" id="q4">
-        <label class="field-title"><span class="qnum">4</span><span id="q4-label"></span></label>
+        <label class="field-title"><span class="qnum">2</span><span id="q4-label"></span></label>
         <input type="text" id="ad-soyad" placeholder="Ad Soyad">
       </div>
 
@@ -143,7 +126,7 @@
       <p class="field-hint" id="greeting-line" style="margin:-18px 0 22px 0;font-size:13px;font-weight:600;color:var(--green);"></p>
 
       <div class="question" id="q5">
-        <label class="field-title"><span class="qnum">5</span><span id="q5-label"></span></label>
+        <label class="field-title"><span class="qnum">3</span><span id="q5-label"></span></label>
         <div class="pillgroup" data-question="asistan">
           <button type="button" class="pill" data-value="evet">Evet</button>
           <button type="button" class="pill" data-value="hayir">Hayır</button>
@@ -151,7 +134,7 @@
       </div>
 
       <div class="question hidden" id="q6">
-        <label class="field-title"><span class="qnum">6</span><span id="q6-label"></span></label>
+        <label class="field-title"><span class="qnum">4</span><span id="q6-label"></span></label>
         <div class="pillgroup" data-question="uzman">
           <button type="button" class="pill" data-value="evet">Evet</button>
           <button type="button" class="pill" data-value="hayir">Hayır</button>
@@ -159,26 +142,12 @@
       </div>
 
       <div class="question hidden" id="q7">
-        <label class="field-title"><span class="qnum">7</span><span id="q7-label"></span></label>
-        <input type="text" id="uzmanlik-dali" list="brans-list" placeholder="Uzmanlık dalını yazın veya listeden seçin">
-        <datalist id="brans-list">
-          <option value="Aile Hekimliği"><option value="Genel Cerrahi"><option value="Kadın Hastalıkları ve Doğum">
-          <option value="Ortopedi ve Travmatoloji"><option value="Kalp ve Damar Cerrahisi"><option value="Göğüs Cerrahisi">
-          <option value="Beyin ve Sinir Cerrahisi"><option value="Acil Tıp"><option value="Anesteziyoloji ve Reanimasyon">
-          <option value="Plastik, Rekonstrüktif ve Estetik Cerrahi"><option value="Çocuk Cerrahisi"><option value="İç Hastalıkları (Dahiliye)">
-          <option value="Kardiyoloji"><option value="Göz Hastalıkları"><option value="Kulak Burun Boğaz Hastalıkları">
-          <option value="Nöroloji"><option value="Radyoloji"><option value="Üroloji"><option value="Enfeksiyon Hastalıkları">
-          <option value="Dermatoloji (Deri ve Zührevi Hastalıklar)"><option value="Fiziksel Tıp ve Rehabilitasyon">
-          <option value="Romatoloji"><option value="Geriatri"><option value="Psikiyatri"><option value="Çocuk Sağlığı ve Hastalıkları">
-          <option value="Diş Tabibi (Genel Diş Hekimliği)"><option value="Ağız, Diş ve Çene Cerrahisi"><option value="Ortodonti">
-          <option value="Endodonti"><option value="Periodontoloji"><option value="Protetik Diş Tedavisi">
-          <option value="Restoratif Diş Tedavisi"><option value="Pedodonti (Çocuk Diş Hekimliği)"><option value="Ağız, Diş ve Çene Radyolojisi">
-        </datalist>
-        <p class="field-hint">Listede göremediğiniz bir branşsanız doğrudan yazabilirsiniz.</p>
+        <label class="field-title"><span class="qnum">5</span><span id="q7-label"></span></label>
+        <input type="text" id="uzmanlik-dali" placeholder="Uzmanlık dalınızı yazın">
       </div>
 
       <div class="question" id="q8">
-        <label class="field-title"><span class="qnum">8</span><span id="q8-label"></span></label>
+        <label class="field-title"><span class="qnum">6</span><span id="q8-label"></span></label>
         <div class="pillgroup" data-question="hastaBakiyor">
           <button type="button" class="pill" data-value="evet">Evet</button>
           <button type="button" class="pill" data-value="hayir">Hayır</button>
@@ -186,29 +155,29 @@
       </div>
 
       <div class="question hidden" id="q9">
-        <label class="field-title"><span class="qnum">9</span><span id="q9-label"></span></label>
+        <label class="field-title"><span class="qnum">7</span><span id="q9-label"></span></label>
         <input type="text" id="yillik-hasta" placeholder="Örn. 500" inputmode="numeric">
         <p class="field-error" id="q9-error">Lütfen hasta sayısını sadece rakamla yazar mısınız? (Örn: 500)</p>
       </div>
 
       <div class="question" id="q10">
-        <label class="field-title"><span class="qnum">10</span><span id="q10-label"></span></label>
+        <label class="field-title"><span class="qnum">8</span><span id="q10-label"></span></label>
         <input type="text" id="is-adresi" placeholder="İş adresi">
       </div>
 
       <div class="question" id="q11">
-        <label class="field-title"><span class="qnum">11</span><span id="q11-label"></span></label>
+        <label class="field-title"><span class="qnum">9</span><span id="q11-label"></span></label>
         <input type="text" id="tescil-no" placeholder="Tescil numarası">
       </div>
 
       <div class="question" id="q12">
-        <label class="field-title"><span class="qnum">12</span><span id="q12-label"></span></label>
+        <label class="field-title"><span class="qnum">10</span><span id="q12-label"></span></label>
         <input type="text" id="tescil-tarihi" placeholder="GG.AA.YYYY">
-        <p class="field-error" id="q12-error">Lütfen tarihi GG.AA.YYYY formatında yazar mısınız? (Örn: 15.05.2015)</p>
+        <p class="field-error" id="q12-error">Lütfen geçerli bir tarihi GG.AA.YYYY formatında yazar mısınız? (Örn: 15.05.2015)</p>
       </div>
 
       <div class="question" id="q13">
-        <label class="field-title"><span class="qnum">13</span><span id="q13-label"></span></label>
+        <label class="field-title"><span class="qnum">11</span><span id="q13-label"></span></label>
         <div class="pillgroup" data-question="ettirenTuru">
           <button type="button" class="pill" data-value="Serbest Çalışan">Serbest Çalışan</button>
           <button type="button" class="pill" data-value="Kamu Çalışanı">Kamu Çalışanı</button>
@@ -216,12 +185,12 @@
       </div>
 
       <div class="question" id="q14">
-        <label class="field-title"><span class="qnum">14</span><span id="q14-label"></span></label>
+        <label class="field-title"><span class="qnum">12</span><span id="q14-label"></span></label>
         <input type="text" id="saglik-kurumu" placeholder="Sağlık kurumu adı">
       </div>
 
       <div class="question" id="q15">
-        <label class="field-title"><span class="qnum">15</span><span id="q15-label"></span></label>
+        <label class="field-title"><span class="qnum">13</span><span id="q15-label"></span></label>
         <div id="sehir-input-wrap"><input type="text" id="sehir" placeholder="Şehir"></div>
         <div id="sehir-detected-wrap" class="detected-box" style="display:none;">
           <span id="sehir-detected-text"></span>
@@ -230,9 +199,17 @@
       </div>
 
       <div class="question" id="q16">
-        <label class="field-title"><span class="qnum">16</span><span id="q16-label"></span></label>
+        <label class="field-title"><span class="qnum">14</span><span id="q16-label"></span></label>
         <input type="text" id="tc-no" placeholder="T.C. Kimlik Numarası" maxlength="11" inputmode="numeric">
         <p class="field-error" id="q16-error">Girdiğiniz T.C. kimlik numarası geçerli görünmüyor, lütfen 11 haneli olarak tekrar yazar mısınız?</p>
+      </div>
+
+      <div class="question" id="q1">
+        <label class="field-title"><span class="qnum">15</span>Şirketimizde daha önce görüştüğünüz bir danışman var mı? <span style="font-weight:400;color:var(--muted);">(isteğe bağlı)</span></label>
+        <input type="text" id="danisman-adi" placeholder="Danışmanınızın adını yazın" autocomplete="off">
+        <div id="danisman-detected-wrap" class="detected-box" style="display:none;margin-top:8px;">
+          <span id="danisman-detected-text"></span>
+        </div>
       </div>
 
       <label class="consent">
@@ -287,11 +264,66 @@
     "Sinop","Sivas","Tekirdağ","Tokat","Trabzon","Tunceli","Şanlıurfa","Uşak","Van","Yozgat","Zonguldak","Aksaray",
     "Bayburt","Karaman","Kırıkkale","Batman","Şırnak","Bartın","Ardahan","Iğdır","Yalova","Karabük","Kilis","Osmaniye","Düzce"];
 
-  const state = { gorusme:null, hedefKisi:null, asistan:null, uzman:null, hastaBakiyor:null, ettirenTuru:null, sehirOto:null };
+  const state = { hedefKisi:null, asistan:null, uzman:null, hastaBakiyor:null, ettirenTuru:null, sehirOto:null };
 
   function val(id){ const el=document.getElementById(id); return el ? el.value.trim() : ''; }
   function setLabel(id, text){ document.getElementById(id).textContent = text; }
   function show(id, visible){ document.getElementById(id).classList.toggle('hidden', !visible); }
+
+  function gecerliTarihMi(str){
+    if(!/^\d{2}\.\d{2}\.\d{4}$/.test(str)) return false;
+    const [gg, aa, yyyy] = str.split('.').map(Number);
+    if(aa < 1 || aa > 12) return false;
+    if(yyyy < 1900 || yyyy > 2100) return false;
+    const ayGunSayisi = [31, (yyyy % 4 === 0 && (yyyy % 100 !== 0 || yyyy % 400 === 0)) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    if(gg < 1 || gg > ayGunSayisi[aa - 1]) return false;
+    return true;
+  }
+
+  // 29.07.2026 eklendi: kullanicinin talebi uzerine - danisman alani artik
+  // "gorustunuz mu? (Evet/Hayır)" + ayri bir dropdown YERINE, wesigorta.com.tr/
+  // primiadeli sayfasindaki ile AYNI desende tek, isteğe bagli bir metin
+  // kutusu: yazdikca ismi TEK ADAYA daralinca (essiz bir on-ek eslesmesi
+  // bulununca) yesil bir onay kutusunda "✓ İsim · telefon — teklif dosyanıza
+  // eklenecek." gosterilir (primiadeli'de "e" yazinca "Enbel Ekşi" onaylanmasi
+  // ile ayni mantik). Telefonu bizde henuz olmayan danismanlar (Yasemin/Simge/
+  // Tuğçe) icin sadece isim gosterilir - onlar da eslesir, sadece telefon
+  // satiri eklenmez.
+  const DANISMAN_LISTESI = [
+    { isim: 'Enbel', telefon: '0532 687 61 26' },
+    { isim: 'Seda', telefon: '0532 417 60 26' },
+    { isim: 'Bahadır', telefon: '0538 071 17 11' },
+    { isim: 'Fırat', telefon: '0552 790 26 16' },
+    { isim: 'Furkan', telefon: '0532 395 96 12' },
+    { isim: 'Şevval', telefon: '0553 924 17 75' },
+    { isim: 'Nilşah', telefon: '0541 114 98 95' },
+    { isim: 'Yasemin', telefon: null },
+    { isim: 'Simge', telefon: null },
+    { isim: 'Tuğçe', telefon: null }
+  ];
+
+  // Girilen metinle BENZERSIZ (tek) bir on-ek eslesmesi varsa o adayi, yoksa
+  // (0 ya da birden fazla aday eslesiyorsa - orn. "S" hem Seda hem Simge ile
+  // baslar) null doner - boylece erken/belirsiz bir eslesme yanlislikla
+  // gosterilmez.
+  function eslesenDanisman(girilenMetin){
+    const q = (girilenMetin || '').trim().toLocaleLowerCase('tr-TR');
+    if(!q) return null;
+    const adaylar = DANISMAN_LISTESI.filter((d) => d.isim.toLocaleLowerCase('tr-TR').startsWith(q));
+    return adaylar.length === 1 ? adaylar[0] : null;
+  }
+
+  function danismanInputGuncelle(){
+    const eslesme = eslesenDanisman(val('danisman-adi'));
+    const wrap = document.getElementById('danisman-detected-wrap');
+    const text = document.getElementById('danisman-detected-text');
+    if(eslesme){
+      text.textContent = `✓ ${eslesme.isim}${eslesme.telefon ? ' · ' + eslesme.telefon : ''} — teklif dosyanıza eklenecek.`;
+      wrap.style.display = 'flex';
+    } else {
+      wrap.style.display = 'none';
+    }
+  }
 
   function ilkIsim(){
     const v = val('ad-soyad');
@@ -377,7 +409,6 @@
   }
 
   function updateVisibility(){
-    show('q2', state.gorusme === 'evet');
     show('rest-of-form', !!state.hedefKisi);
     show('q6', state.asistan === 'hayir');
     const isUzmanOrAsistan = state.asistan === 'evet' || state.uzman === 'evet';
@@ -399,6 +430,7 @@
   }
   document.querySelectorAll('.pillgroup').forEach(setupPillGroup);
   document.getElementById('ad-soyad').addEventListener('input', renderLabels);
+  document.getElementById('danisman-adi').addEventListener('input', danismanInputGuncelle);
 
   // Şehir auto-detect from sağlık kurumu answer
   const saglikKurumuInput = document.getElementById('saglik-kurumu');
@@ -427,7 +459,7 @@
   });
   document.getElementById('tescil-tarihi').addEventListener('blur', function(){
     const v = this.value.trim();
-    document.getElementById('q12-error').classList.toggle('show', v !== '' && !/^\d{2}\.\d{2}\.\d{4}$/.test(v));
+    document.getElementById('q12-error').classList.toggle('show', v !== '' && !gecerliTarihMi(v));
   });
   document.getElementById('tc-no').addEventListener('blur', function(){
     const v = this.value.trim();
@@ -446,7 +478,6 @@
 
     const telefonTemiz = val('telefon').replace(/[\s()\-]/g, '');
     const required = [
-      {id:'q1', ok: !!state.gorusme},
       {id:'q3', ok: !!state.hedefKisi},
       {id:'q4', ok: !!val('ad-soyad')},
       {id:'q-tel', ok: /^(\+90|90|0)?5\d{9}$/.test(telefonTemiz)},
@@ -454,12 +485,11 @@
       {id:'q8', ok: !!state.hastaBakiyor},
       {id:'q10', ok: !!val('is-adresi')},
       {id:'q11', ok: !!val('tescil-no')},
-      {id:'q12', ok: !!val('tescil-tarihi') && /^\d{2}\.\d{2}\.\d{4}$/.test(val('tescil-tarihi'))},
+      {id:'q12', ok: gecerliTarihMi(val('tescil-tarihi'))},
       {id:'q13', ok: !!state.ettirenTuru},
       {id:'q14', ok: !!val('saglik-kurumu')},
       {id:'q16', ok: /^\d{11}$/.test(val('tc-no'))},
     ];
-    if(isVisible('q2')) required.push({id:'q2', ok: !!val('danisman-adi')});
     if(isVisible('q6')) required.push({id:'q6', ok: !!state.uzman});
     if(isVisible('q7')) required.push({id:'q7', ok: !!val('uzmanlik-dali')});
     if(isVisible('q9')) required.push({id:'q9', ok: /^\d+$/.test(val('yillik-hasta'))});
@@ -477,8 +507,8 @@
     }
 
     const payload = {
-      danisman_gorustu_mu: state.gorusme === 'evet' ? 'Evet' : 'Hayır',
-      danisman_adi: isVisible('q2') ? val('danisman-adi') : null,
+      danisman_gorustu_mu: val('danisman-adi') ? 'Evet' : 'Hayır',
+      danisman_adi: val('danisman-adi') || null,
       hedef_kisi: state.hedefKisi,
       ad_soyad: val('ad-soyad'),
       telefon: telefonTemiz,
