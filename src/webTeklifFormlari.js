@@ -85,12 +85,41 @@ function dogrula(b) {
   return null;
 }
 
+// 30.07.2026 eklendi: Bu form, kullanicinin wesigorta.com.tr uzerinde
+// (bu bot sunucusundan AYRI, kendi ana site hostinginde) yayinladigi
+// bir sayfaya (wesigorta.com.tr/malpraktis/) tasindi - yani artik BU
+// SUNUCUYLA AYNI origin degil, teklifEndpoint.js'teki (Hayat/BES web
+// hesaplayicisi) ile AYNI cross-origin durumu gecerli. O yuzden orada
+// zaten kanitlanmis olan AYNI CORS deseni burada da uygulaniyor -
+// izin verilen originlerden gelen istekler icin Access-Control-Allow-*
+// basliklari ekleniyor ve tarayicinin gonderdigi OPTIONS on-kontrol
+// (preflight) istegi ayrica karsilaniyor.
+const IZINLI_ORIGINLER = [
+  "https://wesigorta.com.tr",
+  "https://www.wesigorta.com.tr"
+];
+
+function cors(req, res) {
+  const origin = req.headers.origin;
+  if (IZINLI_ORIGINLER.includes(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+  }
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+}
+
 module.exports = function (app) {
   app.get("/teklif/malpraktis", (req, res) => {
     res.sendFile(path.join(__dirname, "formlar", "malpraktis-teklif-formu.html"));
   });
 
+  app.options("/api/web-teklif/malpraktis", (req, res) => {
+    cors(req, res);
+    res.sendStatus(204);
+  });
+
   app.post("/api/web-teklif/malpraktis", async (req, res) => {
+    cors(req, res);
     try {
       const b = req.body || {};
       const eksikAlan = dogrula(b);

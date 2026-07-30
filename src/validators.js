@@ -9,7 +9,14 @@ function tcKimlikGecerliMi(value) {
   const digits = v.split("").map(Number);
   const oddSum = digits[0] + digits[2] + digits[4] + digits[6] + digits[8];
   const evenSum = digits[1] + digits[3] + digits[5] + digits[7];
-  const digit10 = (oddSum * 7 - evenSum) % 10;
+  // NOT: (oddSum*7 - evenSum) bazen negatif cikabiliyor (orn. ilk hane kucuk,
+  // cift hanelerin toplami buyukse) - JS'in % operatoru negatif sayilarda
+  // negatif sonuc dondurdugu icin ((x % 10) + 10) % 10 ile resmi algoritmadaki
+  // gercek (hep 0-9 araliginda) mod 10 sonucuna normallestiriyoruz. Bu
+  // normallestirme olmadan bazi GERCEK/GECERLI T.C. kimlik numaralari yanlisla
+  // reddediliyordu (bkz. formlar/malpraktis-teklif-formu.html'deki ayni
+  // fonksiyonla tutarlilik icin de bu duzeltme yapildi).
+  const digit10 = ((oddSum * 7 - evenSum) % 10 + 10) % 10;
   const digit11 = (digits.slice(0, 10).reduce((a, b) => a + b, 0)) % 10;
 
   return digit10 === digits[9] && digit11 === digits[10];

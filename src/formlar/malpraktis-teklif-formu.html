@@ -44,6 +44,7 @@
   .question:last-child{border-bottom:none;margin-bottom:0;padding-bottom:0;}
   .question.hidden{display:none;}
   .qnum{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:var(--navy);color:#fff;font-size:12px;font-weight:700;margin-right:8px;flex:none;}
+  .required-star{color:#C0392B;margin-left:3px;font-weight:700;}
   label.field-title{font-size:14px;font-weight:700;color:var(--navy);display:flex;align-items:flex-start;gap:0;margin-bottom:10px;}
   .field-hint{font-size:12px;color:var(--muted);margin-top:6px;}
   .field-error{font-size:12px;color:#C0392B;margin-top:6px;display:none;}
@@ -103,7 +104,7 @@
     <div class="section-label">Teklif İçin Bilgilerinizi Girin</div>
 
     <div class="question" id="q3">
-      <label class="field-title"><span class="qnum">1</span>Hekim Sorumluluk Sigortası poliçesini kendiniz için mi yaptıracaksınız yoksa bir başkası için mi?</label>
+      <label class="field-title"><span class="qnum">1</span>Hekim Sorumluluk Sigortası poliçesini kendiniz için mi yaptıracaksınız yoksa bir başkası için mi?<span class="required-star">*</span></label>
       <div class="pillgroup" data-question="hedefKisi">
         <button type="button" class="pill" data-value="Kendim İçin">Kendim İçin</button>
         <button type="button" class="pill" data-value="Başkası İçin">Başkası İçin</button>
@@ -113,12 +114,12 @@
     <div id="rest-of-form" class="hidden">
 
       <div class="question" id="q4">
-        <label class="field-title"><span class="qnum">2</span><span id="q4-label"></span></label>
+        <label class="field-title"><span class="qnum">2</span><span id="q4-label"></span><span class="required-star">*</span></label>
         <input type="text" id="ad-soyad" placeholder="Ad Soyad">
       </div>
 
       <div class="question" id="q-tel">
-        <label class="field-title"><span class="qnum">📞</span>Size ulaşabileceğimiz bir telefon numarası paylaşır mısınız?</label>
+        <label class="field-title"><span class="qnum">📞</span>Size ulaşabileceğimiz bir telefon numarası paylaşır mısınız?<span class="required-star">*</span></label>
         <input type="text" id="telefon" placeholder="05XX XXX XX XX" inputmode="tel">
         <p class="field-error" id="q-tel-error">Girilen numara geçerli görünmüyor, lütfen tekrar yazar mısınız? (Örn: 05551234567)</p>
       </div>
@@ -126,7 +127,7 @@
       <p class="field-hint" id="greeting-line" style="margin:-18px 0 22px 0;font-size:13px;font-weight:600;color:var(--green);"></p>
 
       <div class="question" id="q5">
-        <label class="field-title"><span class="qnum">3</span><span id="q5-label"></span></label>
+        <label class="field-title"><span class="qnum">3</span><span id="q5-label"></span><span class="required-star">*</span></label>
         <div class="pillgroup" data-question="asistan">
           <button type="button" class="pill" data-value="evet">Evet</button>
           <button type="button" class="pill" data-value="hayir">Hayır</button>
@@ -134,7 +135,7 @@
       </div>
 
       <div class="question hidden" id="q6">
-        <label class="field-title"><span class="qnum">4</span><span id="q6-label"></span></label>
+        <label class="field-title"><span class="qnum">4</span><span id="q6-label"></span><span class="required-star">*</span></label>
         <div class="pillgroup" data-question="uzman">
           <button type="button" class="pill" data-value="evet">Evet</button>
           <button type="button" class="pill" data-value="hayir">Hayır</button>
@@ -142,12 +143,12 @@
       </div>
 
       <div class="question hidden" id="q7">
-        <label class="field-title"><span class="qnum">5</span><span id="q7-label"></span></label>
+        <label class="field-title"><span class="qnum">5</span><span id="q7-label"></span><span class="required-star">*</span></label>
         <input type="text" id="uzmanlik-dali" placeholder="Uzmanlık dalınızı yazın">
       </div>
 
       <div class="question" id="q8">
-        <label class="field-title"><span class="qnum">6</span><span id="q8-label"></span></label>
+        <label class="field-title"><span class="qnum">6</span><span id="q8-label"></span><span class="required-star">*</span></label>
         <div class="pillgroup" data-question="hastaBakiyor">
           <button type="button" class="pill" data-value="evet">Evet</button>
           <button type="button" class="pill" data-value="hayir">Hayır</button>
@@ -155,29 +156,29 @@
       </div>
 
       <div class="question hidden" id="q9">
-        <label class="field-title"><span class="qnum">7</span><span id="q9-label"></span></label>
-        <input type="text" id="yillik-hasta" placeholder="Örn. 500" inputmode="numeric">
-        <p class="field-error" id="q9-error">Lütfen hasta sayısını sadece rakamla yazar mısınız? (Örn: 500)</p>
+        <label class="field-title"><span class="qnum">7</span><span id="q9-label"></span><span class="required-star">*</span></label>
+        <input type="text" id="yillik-hasta" placeholder="Örn. 2.500" inputmode="numeric">
+        <p class="field-error" id="q9-error">Lütfen hasta sayısını rakamla yazar mısınız? (Örn: 2.500)</p>
       </div>
 
       <div class="question" id="q10">
-        <label class="field-title"><span class="qnum">8</span><span id="q10-label"></span></label>
+        <label class="field-title"><span class="qnum">8</span><span id="q10-label"></span><span class="required-star">*</span></label>
         <input type="text" id="is-adresi" placeholder="İş adresi">
       </div>
 
       <div class="question" id="q11">
-        <label class="field-title"><span class="qnum">9</span><span id="q11-label"></span></label>
+        <label class="field-title"><span class="qnum">9</span><span id="q11-label"></span><span class="required-star">*</span></label>
         <input type="text" id="tescil-no" placeholder="Tescil numarası">
       </div>
 
       <div class="question" id="q12">
-        <label class="field-title"><span class="qnum">10</span><span id="q12-label"></span></label>
+        <label class="field-title"><span class="qnum">10</span><span id="q12-label"></span><span class="required-star">*</span></label>
         <input type="text" id="tescil-tarihi" placeholder="GG.AA.YYYY">
         <p class="field-error" id="q12-error">Lütfen geçerli bir tarihi GG.AA.YYYY formatında yazar mısınız? (Örn: 15.05.2015)</p>
       </div>
 
       <div class="question" id="q13">
-        <label class="field-title"><span class="qnum">11</span><span id="q13-label"></span></label>
+        <label class="field-title"><span class="qnum">11</span><span id="q13-label"></span><span class="required-star">*</span></label>
         <div class="pillgroup" data-question="ettirenTuru">
           <button type="button" class="pill" data-value="Serbest Çalışan">Serbest Çalışan</button>
           <button type="button" class="pill" data-value="Kamu Çalışanı">Kamu Çalışanı</button>
@@ -185,12 +186,12 @@
       </div>
 
       <div class="question" id="q14">
-        <label class="field-title"><span class="qnum">12</span><span id="q14-label"></span></label>
+        <label class="field-title"><span class="qnum">12</span><span id="q14-label"></span><span class="required-star">*</span></label>
         <input type="text" id="saglik-kurumu" placeholder="Sağlık kurumu adı">
       </div>
 
       <div class="question" id="q15">
-        <label class="field-title"><span class="qnum">13</span><span id="q15-label"></span></label>
+        <label class="field-title"><span class="qnum">13</span><span id="q15-label"></span><span class="required-star">*</span></label>
         <div id="sehir-input-wrap"><input type="text" id="sehir" placeholder="Şehir"></div>
         <div id="sehir-detected-wrap" class="detected-box" style="display:none;">
           <span id="sehir-detected-text"></span>
@@ -199,9 +200,9 @@
       </div>
 
       <div class="question" id="q16">
-        <label class="field-title"><span class="qnum">14</span><span id="q16-label"></span></label>
+        <label class="field-title"><span class="qnum">14</span><span id="q16-label"></span><span class="required-star">*</span></label>
         <input type="text" id="tc-no" placeholder="T.C. Kimlik Numarası" maxlength="11" inputmode="numeric">
-        <p class="field-error" id="q16-error">Girdiğiniz T.C. kimlik numarası geçerli görünmüyor, lütfen 11 haneli olarak tekrar yazar mısınız?</p>
+        <p class="field-error" id="q16-error">Girdiğiniz T.C. kimlik numarası geçerli görünmüyor, lütfen kontrol edip tekrar yazar mısınız?</p>
       </div>
 
       <div class="question" id="q1">
@@ -217,7 +218,7 @@
         <span>Yukarıdaki bilgilerin, teklif hazırlanması amacıyla WhatsApp üzerinden acenteye iletilmesini kabul ediyorum (KVKK kapsamında rızam alınmıştır).</span>
       </label>
 
-      <button type="button" class="btn btn-primary" id="submit-btn">WhatsApp ile Teklif İçin Gönder</button>
+      <button type="button" class="btn btn-primary" id="submit-btn">Bilgileri Onaylıyorum</button>
       <p class="field-hint" id="validation-msg" style="text-align:center;color:#C0392B;"></p>
     </div>
 
@@ -232,7 +233,7 @@
     <summary>Bilgilendirme</summary>
     <ul>
       <li>Bu form, Hekim Sorumluluk (Tıbbi Kötü Uygulamaya İlişkin Zorunlu Mali Sorumluluk) Sigortası için teklif talebi toplamak amacıyla hazırlanmıştır; bir sigorta teklifi veya sözleşmesi değildir.</li>
-      <li>Gönder butonuna bastığınızda, doldurduğunuz bilgiler WhatsApp üzerinden acentemize iletilir; mesajı göndermeden önce içeriği görüp düzenleyebilirsiniz.</li>
+      <li>"Bilgileri Onaylıyorum" butonuna bastığınızda, doldurduğunuz bilgiler doğrudan sistemimize iletilir ve danışmanlarımıza bildirilir.</li>
       <li>Kesin teminat kapsamı, risk grubu ve prim tutarı danışmanımız tarafından, sigorta şirketinin güncel tarifesine göre size özel olarak hazırlanır.</li>
     </ul>
   </details>
@@ -249,13 +250,22 @@
 </div>
 
 <script>
-  // Bu form artik kendi sunucumuz (whatsapp-sigorta-bot) uzerinden ayni-origin
-  // bir POST ile gonderiliyor - musterinin kendi WhatsApp'ini acip mesaji
-  // KENDISININ gondermesine gerek YOK. Sunucu, cevaplari alir almaz Bahadır'a,
-  // Enbel'e ve (varsa) belirtilen danışmana otomatik WhatsApp bildirimi yollar
-  // ve talebi panelde takip edilebilir bir "iş" (lead) olarak kaydeder - tipki
-  // botun kendisinden gelen bir Malpraktis talebi gibi.
-  const GONDERIM_ENDPOINT = "/api/web-teklif/malpraktis";
+  // Bu form artik whatsapp-sigorta-bot sunucusu tarafindan islenen bir POST'a
+  // gonderiliyor - musterinin kendi WhatsApp'ini acip mesaji KENDISININ
+  // gondermesine gerek YOK. Sunucu, cevaplari alir almaz Bahadır'a, Enbel'e ve
+  // (varsa) belirtilen danışmana otomatik WhatsApp bildirimi yollar ve talebi
+  // panelde takip edilebilir bir "iş" (lead) olarak kaydeder.
+  //
+  // 30.07.2026: Bu HTML dosyasi artik wesigorta.com.tr'de (bot sunucusuyla
+  // AYNI origin'de DEGIL, ayri bir hostingde) yayinlandigi icin bu adres
+  // GORECELI ("/api/...") DEGIL, botun kendi TAM/MUTLAK adresini icermeli -
+  // aksi halde tarayici istegi wesigorta.com.tr'nin kendi sunucusunda
+  // (bot burada calismadigi icin) aramaya calisir ve "Talebiniz
+  // gönderilirken bir sorun oluştu" hatasi alinir. Asagidaki adresi bot
+  // sunucusunun gercek genel (public) adresiyle degistirin - orn.
+  // "https://whatsapp-sigorta-bot-production.up.railway.app/api/web-teklif/malpraktis"
+  // gibi Railway/hosting adresiniz neyse.
+  const GONDERIM_ENDPOINT = "https://BOT-SUNUCUSU-ADRESINIZ-BURAYA/api/web-teklif/malpraktis";
   const ILLER = ["Adana","Adıyaman","Afyonkarahisar","Ağrı","Amasya","Ankara","Antalya","Artvin","Aydın","Balıkesir",
     "Bilecik","Bingöl","Bitlis","Bolu","Burdur","Bursa","Çanakkale","Çankırı","Çorum","Denizli","Diyarbakır","Edirne",
     "Elazığ","Erzincan","Erzurum","Eskişehir","Gaziantep","Giresun","Gümüşhane","Hakkari","Hatay","Isparta","Mersin",
@@ -269,6 +279,30 @@
   function val(id){ const el=document.getElementById(id); return el ? el.value.trim() : ''; }
   function setLabel(id, text){ document.getElementById(id).textContent = text; }
   function show(id, visible){ document.getElementById(id).classList.toggle('hidden', !visible); }
+
+  // Resmi T.C. Kimlik No dogrulama algoritmasi (validators.js'teki
+  // tcKimlikGecerliMi ile BIREBIR ayni mantik) - sadece 11 hane olup
+  // olmadigina degil, kontrol basamaklarinin (10. ve 11. hane) gercekten
+  // dogru hesaplanip hesaplanmadigina bakar. Boylece "12345678901" gibi
+  // 11 haneli ama uydurma/gecersiz numaralar formda hemen yakalanir.
+  // "2.500" gibi binlik ayirici nokta iceren bir hasta sayisini temiz bir
+  // rakam dizisine ("2500") cevirir - kullanicinin ornekteki gibi noktali
+  // yazmasina izin verip, sunucuya (validators.js -> pozitifSayiMi, sadece
+  // duz rakam kabul ediyor) hep temiz haliyle gonderiyoruz.
+  function hastaSayisiTemizle(deger){
+    return (deger || '').replace(/\./g, '').trim();
+  }
+
+  function tcKimlikGecerliMi(deger){
+    const v = (deger || '').replace(/\s/g, '');
+    if(!/^[1-9][0-9]{10}$/.test(v)) return false;
+    const digits = v.split('').map(Number);
+    const oddSum = digits[0] + digits[2] + digits[4] + digits[6] + digits[8];
+    const evenSum = digits[1] + digits[3] + digits[5] + digits[7];
+    const digit10 = ((oddSum * 7 - evenSum) % 10 + 10) % 10;
+    const digit11 = (digits.slice(0, 10).reduce((a, b) => a + b, 0)) % 10;
+    return digit10 === digits[9] && digit11 === digits[10];
+  }
 
   function gecerliTarihMi(str){
     if(!/^\d{2}\.\d{2}\.\d{4}$/.test(str)) return false;
@@ -432,19 +466,29 @@
   document.getElementById('ad-soyad').addEventListener('input', renderLabels);
   document.getElementById('danisman-adi').addEventListener('input', danismanInputGuncelle);
 
-  // Şehir auto-detect from sağlık kurumu answer
-  const saglikKurumuInput = document.getElementById('saglik-kurumu');
-  saglikKurumuInput.addEventListener('blur', () => {
-    const v = val('saglik-kurumu');
-    if(!v){ return; }
+  // Şehir auto-detect - hem iş adresi hem sağlık kurumu cevaplarindan (hangisi
+  // once dolup blur olursa ondan) sehir adi geciyorsa otomatik algila. Zaten
+  // bir kaynaktan algilanmissa (state.sehirOto doluysa) diger alan uzerine
+  // yazmasin diye tekrar denenmez - kullanici "değiştir" ile acikca sifirlarsa
+  // yeniden aktif olur.
+  function sehirOtoAlgila(kaynakMetin, kaynakEtiketi){
+    if(state.sehirOto) return;
+    const v = (kaynakMetin || '').trim();
+    if(!v) return;
     const found = ILLER.find(il => v.toLocaleLowerCase('tr-TR').includes(il.toLocaleLowerCase('tr-TR')));
     if(found){
       state.sehirOto = found;
       document.getElementById('sehir').value = found;
       document.getElementById('sehir-input-wrap').style.display = 'none';
       document.getElementById('sehir-detected-wrap').style.display = 'flex';
-      document.getElementById('sehir-detected-text').textContent = `Şehir "${found}" olarak sağlık kurumu bilgisinden otomatik algılandı.`;
+      document.getElementById('sehir-detected-text').textContent = `Şehir "${found}" olarak ${kaynakEtiketi} bilgisinden otomatik algılandı.`;
     }
+  }
+  document.getElementById('is-adresi').addEventListener('blur', function(){
+    sehirOtoAlgila(this.value, 'iş adresi');
+  });
+  document.getElementById('saglik-kurumu').addEventListener('blur', function(){
+    sehirOtoAlgila(this.value, 'sağlık kurumu');
   });
   document.getElementById('sehir-degistir').addEventListener('click', () => {
     state.sehirOto = null;
@@ -454,8 +498,9 @@
 
   // Inline validations
   document.getElementById('yillik-hasta').addEventListener('blur', function(){
-    const v = this.value.trim();
-    document.getElementById('q9-error').classList.toggle('show', v !== '' && !/^\d+$/.test(v));
+    const raw = this.value.trim();
+    const v = hastaSayisiTemizle(raw);
+    document.getElementById('q9-error').classList.toggle('show', raw !== '' && !/^\d+$/.test(v));
   });
   document.getElementById('tescil-tarihi').addEventListener('blur', function(){
     const v = this.value.trim();
@@ -463,7 +508,7 @@
   });
   document.getElementById('tc-no').addEventListener('blur', function(){
     const v = this.value.trim();
-    document.getElementById('q16-error').classList.toggle('show', v !== '' && !/^\d{11}$/.test(v));
+    document.getElementById('q16-error').classList.toggle('show', v !== '' && !tcKimlikGecerliMi(v));
   });
   document.getElementById('telefon').addEventListener('blur', function(){
     const v = this.value.trim().replace(/[\s()\-]/g, '');
@@ -488,11 +533,11 @@
       {id:'q12', ok: gecerliTarihMi(val('tescil-tarihi'))},
       {id:'q13', ok: !!state.ettirenTuru},
       {id:'q14', ok: !!val('saglik-kurumu')},
-      {id:'q16', ok: /^\d{11}$/.test(val('tc-no'))},
+      {id:'q16', ok: tcKimlikGecerliMi(val('tc-no'))},
     ];
     if(isVisible('q6')) required.push({id:'q6', ok: !!state.uzman});
     if(isVisible('q7')) required.push({id:'q7', ok: !!val('uzmanlik-dali')});
-    if(isVisible('q9')) required.push({id:'q9', ok: /^\d+$/.test(val('yillik-hasta'))});
+    if(isVisible('q9')) required.push({id:'q9', ok: /^\d+$/.test(hastaSayisiTemizle(val('yillik-hasta')))});
     if(!state.sehirOto) required.push({id:'q15', ok: !!val('sehir')});
 
     const missing = required.filter(r => !r.ok);
@@ -516,7 +561,7 @@
       uzman_mi: isVisible('q6') ? (state.uzman === 'evet' ? 'Evet' : 'Hayır') : null,
       uzmanlik_dali: isVisible('q7') ? val('uzmanlik-dali') : null,
       hasta_bakiyor_mu: state.hastaBakiyor === 'evet' ? 'Evet' : 'Hayır',
-      yillik_hasta_sayisi: isVisible('q9') ? val('yillik-hasta') : null,
+      yillik_hasta_sayisi: isVisible('q9') ? hastaSayisiTemizle(val('yillik-hasta')) : null,
       is_adresi: val('is-adresi'),
       tescil_no: val('tescil-no'),
       tescil_tarihi: val('tescil-tarihi'),
@@ -545,7 +590,7 @@
     } catch (e) {
       msg.textContent = 'Talebiniz gönderilirken bir sorun oluştu 😕 Lütfen birazdan tekrar deneyin.';
       btn.disabled = false;
-      btn.textContent = 'WhatsApp ile Teklif İçin Gönder';
+      btn.textContent = 'Bilgileri Onaylıyorum';
     }
   });
 
