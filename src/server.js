@@ -890,7 +890,39 @@ app.post("/webhook", async (req, res) => {
     const value = change?.value;
     const message = value?.messages?.[0];
 
-    if (!message) return; // durum bildirimi (okundu/iletildi) vb. olabilir, yoksay
+    if (!message) {
+      // 30.07.2026 eklendi: mesaj yoksa bu bir DURUM BILDIRIMI (gonderildi/
+      // iletildi/okundu/basarisiz) olabilir. Eskiden bu TAMAMEN yoksayiliyordu
+      // - yani WhatsApp'in API'si bir mesaji ANLIK olarak kabul edip (sendText
+      // / sendTemplate basarili donup, panelde/mesaj gecmisinde normal
+      // gorunmesini saglayip) SONRADAN, ASENKRON olarak "failed" bildirse
+      // bile bunu hicbir yerde gormuyorduk - panelde "gitti" gorunup aslinda
+      // telefona hic ulasmamis bir mesaj fark edilemiyordu (bkz. 30.07.2026
+      // sabahi danismanlara/Bahadır'a/Enbel'e giden gunluk ozetin bir kismi
+      // icin yasanan vaka - Meta tarafinda numara/kalite/limit saglikliydi,
+      // demek ki sorun tam burada, bu GORUNMEZLIKTE idi). Artik "failed"
+      // durumlar hem konsola (Railway loglarinda aranabilir olsun diye) hem
+      // ilgili alicinin mesaj gecmisine (panelde konusma icinde gorunsun diye)
+      // aciqca isleniyor.
+      const statuses = value?.statuses;
+      if (Array.isArray(statuses)) {
+        for (const durum of statuses) {
+          if (durum?.status === "failed") {
+            const alici = durum.recipient_id;
+            const hataDetayi = (durum.errors || [])
+              .map((e) => `${e.code || "?"}: ${e.title || e.message || "bilinmeyen hata"}`)
+              .join(" / ") || "Sebep WhatsApp tarafından belirtilmedi";
+            console.error(
+              `⚠️ WhatsApp mesaj teslimi BAŞARISIZ (asenkron durum bildirimi): alici=${alici}, mesajId=${durum.id}, hata=${hataDetayi}`
+            );
+            if (alici) {
+              messageLog.logMessage(alici, "out", `⚠️ (TESLİM EDİLEMEDİ - WhatsApp sonradan bildirdi) ${hataDetayi}`);
+            }
+          }
+        }
+      }
+      return;
+    }
 
     console.log(`Webhook mesaji alindi: from=${message.from} type=${message.type} id=${message.id}`);
 
