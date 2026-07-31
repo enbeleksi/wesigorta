@@ -290,6 +290,16 @@ function saatAraligiNormallestir(value) {
   return `${bicimle(parsed.baslangicDk)}-${bicimle(parsed.bitisDk)}`;
 }
 
+// NOT (31.07.2026, Randevu Defterim ozelligi tasarlanirken): once burada
+// GG.AA.YYYY + SS:DD'yi ayri ayri alip birlestiren bir yardimci
+// dusunulmustu, ama advisorEngine.js'de zaten AYNI ihtiyaci (tarih+saat -> ms)
+// karsilayan, 20.07.2026 hatirlatma gecikmesi vakasindan sonra saat dilimi
+// hatasi icin ozel olarak duzeltilmis bir fonksiyon (tarihSaatDogrula, "GG.AA.YYYY
+// SS:DD" formatinda TEK bir metin alir) zaten mevcut oldugu icin, tekerlegi
+// yeniden icat/naif (sunucu saat dilimine bagli, ayni eski hataya acik) bir
+// versiyonunu eklemek yerine Randevu Defterim de o mevcut fonksiyonu
+// kullanacak sekilde tasarlandi - bkz. advisorEngine.js.
+
 module.exports = {
   tcKimlikGecerliMi,
   tarihGecerliMi,

@@ -14,7 +14,15 @@ const leadStore = require("./leadStore");
 const yenilemeStore = require("./yenilemeStore");
 const engelliNumaralarStore = require("./engelliNumaralarStore");
 const dokumanStore = require("./dokumanStore");
+// 31.07.2026 eklendi (Randevu Defterim ozelligi).
+const randevuDefteriStore = require("./randevuDefteriStore");
 const { dosyaTuruIzinliMi } = require("./izinliDosyaTurleri");
+// Randevu Defterim'de yuklenen dosyanin GERCEKTEN bir Excel dosyasi olmasi
+// gerekiyor (dosyaTuruIzinliMi'nin izin verdigi PDF/Word/foto turleri degil).
+const RANDEVU_DEFTERI_EXCEL_MIME_TURLERI = [
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+];
 const { garantiEmekliligeGonder } = require("./eposta");
 const {
   tcKimlikGecerliMi,
@@ -950,6 +958,12 @@ const YONETICI_NUMARALARI = DANISMANLAR.filter((d) => d.name === "Enbel" || d.na
   (d) => d.number
 );
 
+// 31.07.2026 eklendi (Randevu Defterim ozelligi): "Olumlu" (randevu alindi)
+// sonucunda Enbel'e bilgi gitmesi gerekiyor - conversationEngine.js'deki
+// ENBEL_NUMARASI disari acilmadigi icin, DANISMANLAR listesinden (tek dogru
+// kaynak) ayni numarayi burada da turetiyoruz.
+const ENBEL_NUMARASI = (DANISMANLAR.find((d) => d.name === "Enbel") || {}).number || "905326876126";
+
 // --- Turkce karakter toleransli secenek eslestirme (conversationEngine.js'deki
 // ile ayni mantik, kucuk oldugu icin burada ayrica tanimlandi) ---
 function normalizeTr(str) {
@@ -1073,6 +1087,20 @@ const KARSILAMA_KAPANIS_REGEX = /\b(hay[ıi]r|yok|te[şs]ekk[üu]r)/i;
 // tesekkurun ARDINDAN baska bir seyin geldigi durumlari (gercek bir soru
 // icerebilecekleri icin) kasten YAKALAMAZ - $ ile ceviri sonunu sabitliyoruz.
 const KAPANIS_IFADE_REGEX = /^(cok\s+)?(tesekkur(ler)?(\s+ederim)?|sagol|saol|elinize\s+saglik)[\s!.,😊🙏👍🎉]*$/;
+
+// --- Randevu Defterim (31.07.2026 eklendi) ---
+// Danismanin WhatsApp'tan Excel yukleyerek musteri/lead listesi olusturup,
+// bu listeden rastgele musteri secip aradiktan sonra sonucu kaydedebildigi
+// ozellik. Tum is mantigi randevuDefteriStore.js'te; burada sadece WhatsApp
+// menu/soru akisi var.
+const RANDEVU_DEFTERI_MENU_SECENEKLERI = ["Excel Yükle", "Müşteri Ara", "Kayıtlarım", "Ana Menü"];
+const RANDEVU_DEFTERI_DURUM_SECENEKLERI = [
+  "Olumlu",
+  "Olumsuz",
+  "Yeniden Aranacak",
+  "Ulaşılamadı",
+  "Yanlış Numara"
+];
 
 async function karsilamaGoster(from, session) {
   const danisman = danismaniBul(from);
@@ -2472,6 +2500,254 @@ async function besFonListesiGoster(from, session) {
   await devamMenuGoster(from, session);
 }
 
+// --- Randevu Defterim (31.07.2026 eklendi) ---
+// Is mantiginin tamami randevuDefteriStore.js'te; burada sadece WhatsApp
+// menu/soru akisi var. Akis: Excel Yükle (dosya -> kayit listesi olusur) /
+// Müşteri Ara (listeden rastgele biri gelir) -> Olumlu/Olumsuz/Yeniden
+// Aranacak/Ulaşılamadı/Yanlış Numara sonucu -> ilgiliyse ek sorular (randevu
+// tarih+saat/yer ya da tekrar arama tarih+saat) -> kayit guncellenir,
+// hatirlatma kurulur (bkz. server.js'deki randevuDefteriHatirlatmalariniKontrolEt).
+
+async function randevuDefteriMenuGoster(from, session) {
+  session.state = "DANISMAN_RANDEVU_DEFTERI_MENU";
+  const ist = randevuDefteriStore.danismanIstatistikleriGetir(from);
+  const ozet = ist.toplam > 0 ? `\n\n📒 Kayıtlı müşteri: ${ist.toplam} (Beklemede: ${ist.beklemede})` : "";
+  await sendList(
+    from,
+    `Randevu Defterim'e hoş geldiniz 📒 Ne yapmak istersiniz?${ozet}`,
+    "Seçin",
+    RANDEVU_DEFTERI_MENU_SECENEKLERI
+  );
+}
+
+async function randevuDefteriExcelYuklemeBaslat(from, session) {
+  session.state = "DANISMAN_RANDEVU_DEFTERI_EXCEL_BEKLE";
+  await sendText(
+    from,
+    "📥 Excel dosyanızı gönderebilirsiniz.\n\n" +
+      "Dosyada şu sütunlar olmalı (ilk satır başlık satırı olmalı, sütun sırası önemli değil):\n\n" +
+      "• Ad Soyad (zorunlu)\n" +
+      "• Telefon (zorunlu, örn. 0532 123 45 67)\n" +
+      "• Şirket Adı (varsa)\n" +
+      "• Vergi Numarası (varsa)\n" +
+      "• Şirket Türü (varsa)\n" +
+      "• Son Dönem Vergisi (varsa)\n" +
+      "• Yaş (varsa)\n\n" +
+      "Hazır olduğunda dosyayı buraya (WhatsApp'tan belge/döküman olarak) gönderebilirsiniz. 📎"
+  );
+}
+
+// Cok sayida atlanan satir oldugunda mesajin asiri uzamasini (WhatsApp
+// mesaj limitleri) onlemek icin ozette gosterilecek maksimum satir sayisi.
+const RANDEVU_DEFTERI_ATLANAN_MAX_GOSTER = 10;
+
+async function randevuDefteriExcelIsle(from, session, buffer, dosyaAdi) {
+  const danisman = danismaniBul(from);
+  const sonuc = randevuDefteriStore.excelYukle(from, danisman ? danisman.name : null, buffer, dosyaAdi);
+
+  if (sonuc.hata) {
+    await sendText(from, `❌ ${sonuc.hata}`);
+    return; // ayni state'te kaliyoruz, danisman duzeltilmis dosyayi tekrar gonderebilir
+  }
+
+  let mesaj =
+    `Excel işlendi ✅\n\n` +
+    `Toplam satır: ${sonuc.toplamSatir}\n` +
+    `Eklenen müşteri: ${sonuc.eklenen.length}\n` +
+    `Atlanan satır: ${sonuc.atlanan.length}`;
+
+  if (sonuc.atlanan.length > 0) {
+    const gosterilecekler = sonuc.atlanan.slice(0, RANDEVU_DEFTERI_ATLANAN_MAX_GOSTER);
+    const satirlar = gosterilecekler.map((a) => `• Satır ${a.satirNo} (${a.adSoyad}): ${a.sebep}`);
+    mesaj += `\n\n${satirlar.join("\n")}`;
+    if (sonuc.atlanan.length > gosterilecekler.length) {
+      mesaj += `\n...ve ${sonuc.atlanan.length - gosterilecekler.length} tane daha.`;
+    }
+  }
+
+  await sendText(from, mesaj);
+  await randevuDefteriMenuGoster(from, session);
+}
+
+async function randevuDefteriMusteriAra(from, session) {
+  const musteri = randevuDefteriStore.rastgeleMusteriGetir(from);
+  if (!musteri) {
+    await sendText(
+      from,
+      "Şu an aranmayı bekleyen bir müşteri kaydınız yok 🙏 Excel yükleyerek yeni müşteri ekleyebilirsiniz."
+    );
+    await randevuDefteriMenuGoster(from, session);
+    return;
+  }
+  await randevuDefteriMusteriGoster(from, session, musteri);
+}
+
+async function randevuDefteriMusteriGoster(from, session, musteri) {
+  session.state = "DANISMAN_RANDEVU_DEFTERI_DURUM_SEC";
+  session.randevuDefteriSeciliId = musteri.id;
+
+  const satirlar = [`👤 ${musteri.adSoyad}`, `📞 ${musteri.telefon}`];
+  if (musteri.sirketAdi) satirlar.push(`🏢 ${musteri.sirketAdi}`);
+  if (musteri.vergiNumarasi) satirlar.push(`Vergi No: ${musteri.vergiNumarasi}`);
+  if (musteri.sirketTuru) satirlar.push(`Şirket Türü: ${musteri.sirketTuru}`);
+  if (musteri.sonDonemVergisi) satirlar.push(`Son Dönem Vergisi: ${musteri.sonDonemVergisi}`);
+  if (musteri.yas) satirlar.push(`Yaş: ${musteri.yas}`);
+
+  const tekrarNotu =
+    (musteri.durum === "yeniden_aranacak" || musteri.durum === "ulasilamadi") && musteri.tekrarArama
+      ? `\n\n(Bu müşteri için ${musteri.tekrarArama.zamanMetni} tekrar arama zamanı kurulmuştu.)`
+      : "";
+
+  await sendText(
+    from,
+    `İşte aranacak müşteri 📋\n\n${satirlar.join("\n")}${tekrarNotu}\n\nMüşteriyi aradıktan sonra görüşmenin sonucunu seçer misiniz?`
+  );
+  await sendList(from, "Görüşme sonucu nedir?", "Seçin", RANDEVU_DEFTERI_DURUM_SECENEKLERI);
+}
+
+async function randevuDefteriIstatistikGoster(from, session) {
+  const ist = randevuDefteriStore.danismanIstatistikleriGetir(from);
+  await sendText(
+    from,
+    `📊 Randevu Defterim Kayıtlarım\n\n` +
+      `Toplam: ${ist.toplam}\n` +
+      `Beklemede: ${ist.beklemede}\n` +
+      `Olumlu: ${ist.olumlu}\n` +
+      `Olumsuz: ${ist.olumsuz}\n` +
+      `Yeniden Aranacak: ${ist.yeniden_aranacak}\n` +
+      `Ulaşılamadı: ${ist.ulasilamadi}\n` +
+      `Yanlış Numara: ${ist.yanlis_numara}`
+  );
+  await randevuDefteriMenuGoster(from, session);
+}
+
+async function randevuDefteriOlumsuzAciklamaSor(from, session) {
+  session.state = "DANISMAN_RANDEVU_DEFTERI_OLUMSUZ_ACIKLAMA";
+  await sendText(from, "Anlıyorum. Kısaca nedenini paylaşır mısınız?");
+}
+
+async function randevuDefteriOlumsuzTamamla(from, session, neden) {
+  const musteri = randevuDefteriStore.kayitGetir(session.randevuDefteriSeciliId);
+  randevuDefteriStore.olumsuzIsaretle(session.randevuDefteriSeciliId, neden);
+  await sendText(from, `Not edildi. ${musteri ? musteri.adSoyad : "Müşteri"} kaydı olumsuz olarak işaretlendi.`);
+  session.randevuDefteriSeciliId = null;
+  await randevuDefteriMenuGoster(from, session);
+}
+
+async function randevuDefteriYanlisNumaraTamamla(from, session) {
+  const musteri = randevuDefteriStore.kayitGetir(session.randevuDefteriSeciliId);
+  randevuDefteriStore.yanlisNumaraIsaretle(session.randevuDefteriSeciliId);
+  await sendText(
+    from,
+    `Not edildi ✅ ${musteri ? musteri.adSoyad : "Müşteri"} kaydı "yanlış numara" olarak işaretlendi, bu numara bir daha kimseye önerilmeyecek.`
+  );
+  session.randevuDefteriSeciliId = null;
+  await randevuDefteriMenuGoster(from, session);
+}
+
+// NOT: tarih+saat girisi icin ayri iki soru (once gun, sonra saat) yerine
+// leadStore hatirlatmasindaki (DANISMAN_HATIRLATMA_TARIH_BEKLE) ile AYNI
+// TEK mesajlik "GG.AA.YYYY SS:DD" formati kullaniliyor - hem daha az adim
+// hem de daha onemlisi tarihSaatDogrula (yukarida, 20.07.2026 hatirlatma
+// gecikmesi vakasindan sonra saat dilimi hatasina karsi ozel olarak
+// duzeltilmis fonksiyon) zaten TAM bu formati bekliyor. Randevu/tekrar arama
+// icin AYRI bir naif tarih+saat birlestirme fonksiyonu YAZILMADI ki ayni
+// saat dilimi hatasi (sunucu UTC calisirken 3 saat kayma) kazara tekrar
+// eklenmesin.
+async function randevuDefteriRandevuTarihSor(from, session) {
+  session.state = "DANISMAN_RANDEVU_DEFTERI_RANDEVU_TARIH";
+  session.randevuDefteriGecici = {};
+  await sendText(
+    from,
+    "Tebrikler! 🎉 Randevu ne zaman? GG.AA.YYYY SS:DD formatında yazar mısınız? (Örn: 10.08.2026 14:30)"
+  );
+}
+
+async function randevuDefteriRandevuYerSor(from, session) {
+  session.state = "DANISMAN_RANDEVU_DEFTERI_RANDEVU_YER";
+  await sendText(from, "Randevu nerede olacak? (Örn: Kadıköy Ofis, müşterinin iş yeri vb.)");
+}
+
+async function randevuDefteriRandevuTamamla(from, session) {
+  const musteri = randevuDefteriStore.kayitGetir(session.randevuDefteriSeciliId);
+  const danisman = danismaniBul(from);
+  const g = session.randevuDefteriGecici;
+  const zamanMetni = turkiyeSaatiniFormatla(g.zamanMs, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+
+  randevuDefteriStore.olumluIsaretle(session.randevuDefteriSeciliId, {
+    zamanMs: g.zamanMs,
+    zamanMetni,
+    yer: g.yer
+  });
+
+  await sendText(
+    from,
+    `✅ ${musteri ? musteri.adSoyad : "Müşteri"} ile ${zamanMetni} tarihinde ${g.yer} adresinde randevu oluşturuldu! Randevu zamanı geldiğinde size hatırlatacağım. 🎉`
+  );
+
+  // Enbel'e bilgi gitmesi kullanicinin acik talebiydi ("hangi danismanin
+  // randevu aldigi da yer alacak") - bu bir bildirim, danismanin kendi
+  // akisini ASLA bozmamali (try/catch ile izole, bkz. bu dosyadaki diger
+  // "guvenlik agi" bildirimleriyle AYNI ilke).
+  try {
+    // 31.07.2026 eklendi: kullanicinin "ayrı şablon daha mantıklı" geri
+    // bildirimi uzerine, bu bildirim artik AGENT_DETAY_TEMPLATE_NAME'in
+    // ("YENI TALEP" basligi) yerine Randevu Defterim'e ozel sablonu (varsa)
+    // deneyen randevuDefteriHatirlatmaGonder ile gonderiliyor (bkz. o
+    // fonksiyonun conversationEngine.js'teki yorumu).
+    await conversationEngine.randevuDefteriHatirlatmaGonder(
+      ENBEL_NUMARASI,
+      `📅 Yeni Randevu\n\nDanışman: ${danisman ? danisman.name : from}\nMüşteri: ${musteri ? musteri.adSoyad : "?"} (${
+        musteri ? musteri.telefon : "?"
+      })\nTarih: ${zamanMetni}\nYer: ${g.yer}`
+    );
+  } catch (err) {
+    console.error("Randevu bildirimi Enbel'e gonderilemedi:", err?.response?.data || err.message);
+  }
+
+  session.randevuDefteriGecici = null;
+  session.randevuDefteriSeciliId = null;
+  await randevuDefteriMenuGoster(from, session);
+}
+
+async function randevuDefteriTekrarTarihSor(from, session, durum) {
+  session.state = "DANISMAN_RANDEVU_DEFTERI_TEKRAR_TARIH";
+  session.randevuDefteriGecici = { durum };
+  await sendText(
+    from,
+    "Müşteriyi ne zaman tekrar aramak istersiniz? GG.AA.YYYY SS:DD formatında yazar mısınız? (Örn: 10.08.2026 14:30)"
+  );
+}
+
+async function randevuDefteriTekrarTamamla(from, session) {
+  const musteri = randevuDefteriStore.kayitGetir(session.randevuDefteriSeciliId);
+  const g = session.randevuDefteriGecici;
+  const zamanMetni = turkiyeSaatiniFormatla(g.zamanMs, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+
+  randevuDefteriStore.tekrarAramaIsaretle(session.randevuDefteriSeciliId, g.durum, {
+    zamanMs: g.zamanMs,
+    zamanMetni
+  });
+
+  await sendText(from, `Not edildi ✅ ${musteri ? musteri.adSoyad : "Müşteri"} için ${zamanMetni} tarihinde tekrar hatırlatacağım.`);
+
+  session.randevuDefteriGecici = null;
+  session.randevuDefteriSeciliId = null;
+  await randevuDefteriMenuGoster(from, session);
+}
+
 // --- Belgelerin TOPLU/KARISIK sirada gonderilebilmesi (24.07.2026 geri
 // bildirimi) icin yardimci fonksiyonlar ---
 
@@ -2726,6 +3002,27 @@ async function handleAdvisorMessage(from, parsed) {
         from,
         "Bu dosya türünü kabul edemiyoruz 🙏 Sadece PDF, Word, Excel veya fotoğraf (jpg/png) gönderebilirsiniz."
       );
+      return;
+    }
+
+    // 31.07.2026 eklendi (Randevu Defterim ozelligi): danisman Excel Yükle
+    // adimindaysa, gelen dosyayi (izinli genel turler icinde olsa bile,
+    // orn. bir fotograf DEGIL) GERCEKTEN bir Excel dosyasi olup olmadigini
+    // ayrica kontrol edip isliyoruz - digger tum durum/akislardan ONCE,
+    // cunku bu state'te baska hicbir belge islemi anlamli degil.
+    if (session.state === "DANISMAN_RANDEVU_DEFTERI_EXCEL_BEKLE") {
+      if (!RANDEVU_DEFTERI_EXCEL_MIME_TURLERI.includes((parsed.mimeType || "").toLowerCase())) {
+        await sendText(from, "Bu bir Excel dosyası (.xlsx/.xls) gibi görünmüyor 🙏 Lütfen Excel formatında gönderir misiniz?");
+        return;
+      }
+      try {
+        const { buffer } = await mediaIndir(parsed.mediaId);
+        await sendText(from, "Excel dosyanızı işliyorum, bir saniye... 🔍");
+        await randevuDefteriExcelIsle(from, session, buffer, parsed.dosyaAdi);
+      } catch (err) {
+        console.error("Randevu defteri excel indirilemedi/islenemedi:", err?.response?.data || err.message);
+        await sendText(from, "Dosyayı işlerken bir sorun oluştu 🙏 Lütfen tekrar gönderir misiniz?");
+      }
       return;
     }
 
@@ -3057,16 +3354,11 @@ async function handleAdvisorMessage(from, parsed) {
         await yenilemeBaslat(from, session);
         return;
       }
-      // 31.07.2026 eklendi: icerigi henuz kullaniciyla birlikte
-      // detaylandirilmadigi icin simdilik bir "yakinda" placeholder'i
-      // gosterip ana menuye donuyor - gercek islevi netlestikce buraya
-      // eklenecek.
+      // 31.07.2026 eklendi: ilk surumde placeholder'di ("yakında burada
+      // olacak"), kullanicinin ayrintili aciklamasi uzerine tam ozellik
+      // (Excel yukleme + rastgele musteri arama + sonuc kaydi) eklendi.
       if (userText === "Randevu Defterim") {
-        await sendText(
-          from,
-          "📅 Randevu Defterim özelliği yakında burada olacak! İçeriğini birlikte netleştireceğiz 🙂"
-        );
-        await devamMenuGoster(from, session);
+        await randevuDefteriMenuGoster(from, session);
         return;
       }
       if (userText === "Sık Sorulan Sorular") {
@@ -3745,6 +4037,117 @@ async function handleAdvisorMessage(from, parsed) {
       const cevap = await modul.soruyaCevapVer(userText);
       await sendText(from, cevap);
       await sendText(from, "Başka bir sorunuz var mı? Yoksa ana menüye dönmek için \"menü\" yazabilirsiniz. 😊");
+      return;
+    }
+
+    // --- Randevu Defterim (31.07.2026 eklendi) ---
+    case "DANISMAN_RANDEVU_DEFTERI_MENU": {
+      const secim = matchOption(userText, RANDEVU_DEFTERI_MENU_SECENEKLERI) || userText;
+      if (secim === "Excel Yükle") {
+        await randevuDefteriExcelYuklemeBaslat(from, session);
+        return;
+      }
+      if (secim === "Müşteri Ara") {
+        await randevuDefteriMusteriAra(from, session);
+        return;
+      }
+      if (secim === "Kayıtlarım") {
+        await randevuDefteriIstatistikGoster(from, session);
+        return;
+      }
+      if (secim === "Ana Menü") {
+        await karsilamaGoster(from, session);
+        return;
+      }
+      await randevuDefteriMenuGoster(from, session);
+      return;
+    }
+
+    case "DANISMAN_RANDEVU_DEFTERI_EXCEL_BEKLE": {
+      // Bu state'te asil islem media (dosya) mesajlarinda yapiliyor (bkz.
+      // handleAdvisorMessage basindaki media kontrolu) - buraya sadece
+      // danisman YANLISLIKLA metin yazarsa dusulur.
+      await sendText(from, "Lütfen Excel dosyanızı WhatsApp üzerinden dosya (döküman) olarak gönderir misiniz? 📎");
+      return;
+    }
+
+    case "DANISMAN_RANDEVU_DEFTERI_DURUM_SEC": {
+      const secim = matchOption(userText, RANDEVU_DEFTERI_DURUM_SECENEKLERI) || userText;
+      const musteri = randevuDefteriStore.kayitGetir(session.randevuDefteriSeciliId);
+      if (!musteri) {
+        await randevuDefteriMenuGoster(from, session);
+        return;
+      }
+      if (secim === "Olumlu") {
+        await randevuDefteriRandevuTarihSor(from, session);
+        return;
+      }
+      if (secim === "Olumsuz") {
+        await randevuDefteriOlumsuzAciklamaSor(from, session);
+        return;
+      }
+      if (secim === "Yeniden Aranacak") {
+        await randevuDefteriTekrarTarihSor(from, session, "yeniden_aranacak");
+        return;
+      }
+      if (secim === "Ulaşılamadı") {
+        await randevuDefteriTekrarTarihSor(from, session, "ulasilamadi");
+        return;
+      }
+      if (secim === "Yanlış Numara") {
+        await randevuDefteriYanlisNumaraTamamla(from, session);
+        return;
+      }
+      await sendList(from, "Lütfen listeden bir sonuç seçin:", "Seçin", RANDEVU_DEFTERI_DURUM_SECENEKLERI);
+      return;
+    }
+
+    case "DANISMAN_RANDEVU_DEFTERI_OLUMSUZ_ACIKLAMA": {
+      if (!bosDegilMi(userText)) {
+        await sendText(from, "Kısaca nedenini yazar mısınız?");
+        return;
+      }
+      await randevuDefteriOlumsuzTamamla(from, session, userText.trim());
+      return;
+    }
+
+    case "DANISMAN_RANDEVU_DEFTERI_RANDEVU_TARIH": {
+      const zamanMs = tarihSaatDogrula(userText);
+      if (!zamanMs) {
+        await sendText(from, "Lütfen GG.AA.YYYY SS:DD formatında yazar mısınız? (Örn: 10.08.2026 14:30)");
+        return;
+      }
+      if (zamanMs < Date.now()) {
+        await sendText(from, "Bu tarih geçmişte kalmış görünüyor, lütfen ileri bir tarih/saat yazar mısınız?");
+        return;
+      }
+      session.randevuDefteriGecici.zamanMs = zamanMs;
+      await randevuDefteriRandevuYerSor(from, session);
+      return;
+    }
+
+    case "DANISMAN_RANDEVU_DEFTERI_RANDEVU_YER": {
+      if (!bosDegilMi(userText)) {
+        await sendText(from, "Randevu yerini yazar mısınız?");
+        return;
+      }
+      session.randevuDefteriGecici.yer = userText.trim();
+      await randevuDefteriRandevuTamamla(from, session);
+      return;
+    }
+
+    case "DANISMAN_RANDEVU_DEFTERI_TEKRAR_TARIH": {
+      const zamanMs = tarihSaatDogrula(userText);
+      if (!zamanMs) {
+        await sendText(from, "Lütfen GG.AA.YYYY SS:DD formatında yazar mısınız? (Örn: 10.08.2026 14:30)");
+        return;
+      }
+      if (zamanMs < Date.now()) {
+        await sendText(from, "Bu tarih geçmişte kalmış görünüyor, lütfen ileri bir tarih/saat yazar mısınız?");
+        return;
+      }
+      session.randevuDefteriGecici.zamanMs = zamanMs;
+      await randevuDefteriTekrarTamamla(from, session);
       return;
     }
 

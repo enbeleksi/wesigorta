@@ -7,6 +7,9 @@ const {
   handleIncoming,
   hatirlatmaGonder,
   gunlukOzetGonder,
+  // 31.07.2026 eklendi (Randevu Defterim ozelligi) - bkz. bu fonksiyonun
+  // conversationEngine.js'teki yorumu.
+  randevuDefteriHatirlatmaGonder,
   memnuniyetAnketiGonder,
   notEklendiBildirimiGonder,
   yeniTalepAksiyonHookAyarla,
@@ -20,6 +23,8 @@ const leadStore = require("./leadStore");
 const yenilemeStore = require("./yenilemeStore");
 const engelliNumaralarStore = require("./engelliNumaralarStore");
 const dokumanStore = require("./dokumanStore");
+// 31.07.2026 eklendi (Randevu Defterim ozelligi).
+const randevuDefteriStore = require("./randevuDefteriStore");
 const flows = require("./flows");
 const db = require("./db");
 const sessionStore = require("./sessionStore");
@@ -483,6 +488,60 @@ app.get("/api/panel/gunluk-ozet-sablonu-olustur", panelAuth, async (req, res) =>
     );
   } catch (err) {
     console.error("Gunluk ozet sablonu olusturma hatasi:", err?.response?.data || err.message);
+    res.status(500).send(
+      `<pre style="font-family:monospace; padding:20px; color:#c00;">❌ Hata:\n\n${JSON.stringify(err?.response?.data || err.message, null, 2)}</pre>`
+    );
+  }
+});
+
+// --- Bir kerelik kurulum: Randevu Defterim ozelliginin UC bildirim turu
+// (Enbel'e "yeni randevu" bilgisi, danismana "tekrar arama zamani geldi",
+// danismana "randevu zamani geldi") icin AYRI, EKIP-ICI (musteriye degil)
+// bir UTILITY sablonu olusturur. 31.07.2026'da eklendi - kullanicinin
+// "ayrı şablon daha mantıklı" geri bildirimi uzerine (gunluk ozet icin daha
+// once yasanan AYNI sorun: bu bildirimler de eskiden AGENT_DETAY_TEMPLATE_NAME
+// ile, yani "YENI TALEP" basligiyla gonderiliyordu - bir randevu/arama
+// hatirlatmasinin basinda bu baslik anlamsiz duruyor). Gunluk ozet
+// sablonuyla AYNI tasarim: HEADER SABIT (degiskensiz, emoji/yeni satir/
+// markdown YOK - bkz. yukaridaki 31.07.2026 tarihli NOT, Meta bunlari HEADER'da
+// kabul etmiyor), BODY ise TEK bir {{detay}} degiskeninden olusuyor - boylece
+// musteri adi/telefon/tarih/yer gibi HER BILDIRIMDE DEGISEN tum icerik tek
+// bir parametre olarak geciyor, Meta'nin UTILITY kategorisi kuralina uygun.
+// Meta onayi (genelde dakikalar-birkac saat surer) WhatsApp Manager > Message
+// Templates ekranindan takip edilebilir. Onaylandiktan sonra sablon adini
+// Railway'de RANDEVU_DEFTERI_TEMPLATE_NAME olarak tanimlamaniz yeterli - o ana
+// kadar (ve tanimlanana kadar) bu bildirimler otomatik olarak eski
+// AGENT_DETAY_TEMPLATE_NAME ile gonderilmeye devam eder (bkz.
+// conversationEngine.js'teki randevuDefteriHatirlatmaGonder), yani gecis
+// sirasinda hicbir bildirim kaybolmaz. Kullanildiktan sonra bu route silinebilir.
+app.get("/api/panel/randevu-defteri-sablonu-olustur", panelAuth, async (req, res) => {
+  try {
+    const sonuc = await sablonOlustur({
+      name: "randevu_defteri_bildirimi_v1",
+      language: "tr",
+      category: "UTILITY",
+      components: [
+        { type: "HEADER", format: "TEXT", text: "Randevu Defteri Bildirimi" },
+        {
+          type: "BODY",
+          text: "{{detay}}",
+          example: {
+            body_text_named_params: [
+              {
+                param_name: "detay",
+                example:
+                  "📅 Yeni Randevu\n\nDanışman: Enbel\nMüşteri: Ahmet Yılmaz (905321112233)\nTarih: 10.08.2026 14:30\nYer: Kadıköy Ofis"
+              }
+            ]
+          }
+        }
+      ]
+    });
+    res.send(
+      `<pre style="font-family:monospace; padding:20px;">✅ Şablon isteği gönderildi.\n\n${JSON.stringify(sonuc.data, null, 2)}</pre>`
+    );
+  } catch (err) {
+    console.error("Randevu defteri sablonu olusturma hatasi:", err?.response?.data || err.message);
     res.status(500).send(
       `<pre style="font-family:monospace; padding:20px; color:#c00;">❌ Hata:\n\n${JSON.stringify(err?.response?.data || err.message, null, 2)}</pre>`
     );
@@ -1169,6 +1228,66 @@ async function hatirlatmalariKontrolEt() {
   }
 }
 
+// --- Randevu Defterim hatirlatmalari (31.07.2026 eklendi) ---
+// Her dakika, zamani gelmis (ve henuz gonderilmemis) iki tur hatirlatmayi
+// kontrol eder: 1) "Yeniden Aranacak"/"Ulaşılamadı" olarak isaretlenen
+// musteriler icin kurulan tekrar arama hatirlaticilari, 2) "Olumlu" (randevu
+// alindi) olarak isaretlenen musteriler icin kurulan randevu hatirlaticilari.
+// ONEMLI: hatirlatmalariKontrolEt'teki AYNI ilke - bu fonksiyon SADECE bir
+// bildirim mesaji gonderir, danismanin session/state'ine ASLA dokunmaz (o an
+// baska bir akisin ortasinda olabilir) - danisman "Müşteri Ara" dedigi an
+// zaten zamani gelmis olanlar oncelikli olarak karsisina cikiyor (bkz.
+// randevuDefteriStore.rastgeleMusteriGetir).
+async function randevuDefteriHatirlatmalariniKontrolEt() {
+  const tekrarAramalar = randevuDefteriStore.zamaniGelenTekrarAramaHatirlatmalari();
+  for (const kayit of tekrarAramalar) {
+    const mesaj =
+      `⏰ Hatırlatma! Tekrar arama zamanı geldi.\n\n` +
+      `Müşteri: ${kayit.adSoyad}\n` +
+      `Telefon: ${kayit.telefon}\n\n` +
+      `"Randevu Defterim" > "Müşteri Ara" ile bu müşteriyi tekrar arayabilirsiniz.`;
+    try {
+      await randevuDefteriHatirlatmaGonder(kayit.danismanNumarasi, mesaj);
+      console.log("Randevu defteri tekrar arama hatirlatmasi gonderildi:", kayit.id, kayit.danismanNumarasi);
+      randevuDefteriStore.tekrarAramaHatirlatmaGonderildiIsaretle(kayit.id);
+    } catch (err) {
+      const guncelDenemeSayisi = (kayit.tekrarArama.hatirlatma.denemeSayisi || 0) + 1;
+      const pesGecMi = guncelDenemeSayisi >= HATIRLATMA_MAX_DENEME;
+      console.error(
+        `Randevu defteri tekrar arama hatirlatmasi gonderilemedi (deneme ${guncelDenemeSayisi}/${HATIRLATMA_MAX_DENEME}, kayit ${kayit.id})${
+          pesGecMi ? " - PES EDILDI" : " - bir dakika sonra tekrar denenecek"
+        }:`,
+        err?.response?.data || err.message
+      );
+      randevuDefteriStore.tekrarAramaHatirlatmaDenemeBasarisiz(kayit.id, pesGecMi);
+    }
+  }
+
+  const randevular = randevuDefteriStore.zamaniGelenRandevuHatirlatmalari();
+  for (const kayit of randevular) {
+    const mesaj =
+      `⏰ Hatırlatma! Randevu zamanı geldi.\n\n` +
+      `Müşteri: ${kayit.adSoyad}\n` +
+      `Telefon: ${kayit.telefon}\n` +
+      `Yer: ${kayit.randevu.yer}`;
+    try {
+      await randevuDefteriHatirlatmaGonder(kayit.danismanNumarasi, mesaj);
+      console.log("Randevu defteri randevu hatirlatmasi gonderildi:", kayit.id, kayit.danismanNumarasi);
+      randevuDefteriStore.randevuHatirlatmaGonderildiIsaretle(kayit.id);
+    } catch (err) {
+      const guncelDenemeSayisi = (kayit.randevu.hatirlatma.denemeSayisi || 0) + 1;
+      const pesGecMi = guncelDenemeSayisi >= HATIRLATMA_MAX_DENEME;
+      console.error(
+        `Randevu defteri randevu hatirlatmasi gonderilemedi (deneme ${guncelDenemeSayisi}/${HATIRLATMA_MAX_DENEME}, kayit ${kayit.id})${
+          pesGecMi ? " - PES EDILDI" : " - bir dakika sonra tekrar denenecek"
+        }:`,
+        err?.response?.data || err.message
+      );
+      randevuDefteriStore.randevuHatirlatmaDenemeBasarisiz(kayit.id, pesGecMi);
+    }
+  }
+}
+
 // --- Memnuniyet/kalite kontrolu anketi zamanlayicisi ---
 // Her dakika, zamani gelmis (ve henuz gonderilmemis) memnuniyet anketlerini
 // kontrol edip ilgili musteriye WhatsApp mesaji olarak gonderir. Hatirlatma
@@ -1511,7 +1630,8 @@ async function tumVeriyiKaydet() {
     yenilemeStore.kaydet().catch((err) => console.error("Yenilemeler kaydedilemedi:", err.message)),
     islenenMesajIdleriKaydet().catch((err) => console.error("İşlenen mesaj ID'leri kaydedilemedi:", err.message)),
     musteriProfilStore.kaydet().catch((err) => console.error("Müşteri profilleri kaydedilemedi:", err.message)),
-    engelliNumaralarStore.kaydet().catch((err) => console.error("Engelli numaralar kaydedilemedi:", err.message))
+    engelliNumaralarStore.kaydet().catch((err) => console.error("Engelli numaralar kaydedilemedi:", err.message)),
+    randevuDefteriStore.kaydet().catch((err) => console.error("Randevu defteri kaydedilemedi:", err.message))
   ]);
 }
 
@@ -1559,6 +1679,7 @@ async function baslat() {
   await guvenliYukle("Islenmis mesaj ID'leri", islenenMesajIdleriYukle);
   await guvenliYukle("Musteri profilleri", musteriProfilStore.yukle);
   await guvenliYukle("Engelli numaralar", engelliNumaralarStore.yukle);
+  await guvenliYukle("Randevu defteri", randevuDefteriStore.yukle);
 
   app.listen(PORT, () => {
     console.log(`Sunucu ${PORT} portunda calisiyor.`);
@@ -1570,6 +1691,10 @@ async function baslat() {
 
   setInterval(() => {
     hatirlatmalariKontrolEt().catch((err) => console.error("Hatirlatma kontrolu hatasi:", err));
+  }, HATIRLATMA_KONTROL_SIKLIGI_MS);
+
+  setInterval(() => {
+    randevuDefteriHatirlatmalariniKontrolEt().catch((err) => console.error("Randevu defteri hatirlatma kontrolu hatasi:", err));
   }, HATIRLATMA_KONTROL_SIKLIGI_MS);
 
   setInterval(() => {

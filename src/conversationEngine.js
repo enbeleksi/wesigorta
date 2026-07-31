@@ -1909,6 +1909,35 @@ async function gunlukOzetGonder(numara, metin) {
   await hatirlatmaGonder(numara, metin); // basarisiz olursa hata cagirana ULASIR (hatirlatmaGonder'daki NOT'a bakin)
 }
 
+// 31.07.2026 eklendi: Randevu Defterim ozelligi (bkz. randevuDefteriStore.js,
+// advisorEngine.js) icin gonderilen UC bildirim turu - Enbel'e "yeni randevu"
+// bilgisi, danismana "tekrar arama zamani geldi" hatirlatmasi, danismana
+// "randevu zamani geldi" hatirlatmasi - gunlukOzetGonder ile AYNI gerekce ve
+// AYNI katmanli (layered) fallback yaklasimi: bu bildirimler AGENT_DETAY_
+// TEMPLATE_NAME'in "YENI TALEP" basligi altinda gonderilirse (hatirlatmaGonder
+// gibi) danismana kafa karistirici gelir (kullanicinin gunluk ozet icin verdigi
+// AYNI geri bildirim burada da gecerli - bir randevu/arama hatirlatmasinin
+// basinda "Yeni bir talep geldi!" yazmasi anlamsiz). Bu yuzden ONCE ozel
+// RANDEVU_DEFTERI_TEMPLATE_NAME (bkz. server.js'teki /api/panel/randevu-
+// defteri-sablonu-olustur, .env.example) denenir; o basarisiz olursa VEYA
+// henuz tanimlanmamissa (Meta onayi bekleniyor olabilir) ESKI genel
+// hatirlatmaGonder'a dusulur - gecis surecinde bile hicbir bildirim kaybolmaz.
+async function randevuDefteriHatirlatmaGonder(numara, metin) {
+  const sablonAdi = process.env.RANDEVU_DEFTERI_TEMPLATE_NAME;
+  if (sablonAdi) {
+    try {
+      await sendTemplate(numara, sablonAdi, "tr", { detay: sablonParametresiIcinTemizle(metin) }, metin);
+      return;
+    } catch (err) {
+      console.error(
+        "Randevu defteri şablonu gönderilemedi, genel hatırlatma şablonuna düşülüyor:",
+        err?.response?.data || err.message
+      );
+    }
+  }
+  await hatirlatmaGonder(numara, metin); // basarisiz olursa hata cagirana ULASIR (hatirlatmaGonder'daki NOT'a bakin)
+}
+
 // 27.07.2026 eklendi: gunluk bekleyen is ozeti gibi COK SATIRLI (birden fazla
 // gercek satir sonu icheren) mesajlar icin. hatirlatmaGonder'daki
 // AGENT_DETAY_TEMPLATE_NAME sablonu "YENI TALEP" bildirimleri icin Meta'ya
@@ -2026,6 +2055,7 @@ module.exports = {
   handleIncoming,
   hatirlatmaGonder,
   gunlukOzetGonder,
+  randevuDefteriHatirlatmaGonder,
   cokSatirliMesajGonder,
   memnuniyetAnketiGonder,
   notEklendiBildirimiGonder,
