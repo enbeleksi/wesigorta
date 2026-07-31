@@ -13,8 +13,8 @@ const sessions = new Map();
 
 function defaultSession() {
   return {
-    state: "NEW", // NEW -> ASK_NAME -> ASK_INTENT -> ASK_PRODUCT -> ASKING -> DONE
-    //                                             \-> ASK_INFO_PRODUCT -> URUN_BILGI_SORU
+    state: "NEW", // NEW -> ASK_NAME -> ASK_PRODUCT -> ASKING -> DONE
+    //                                        \-> (Sık Sorulan Sorular secilirse) ASK_INFO_PRODUCT -> URUN_BILGI_SORU
     name: null,
     product: null,
     questionIndex: 0,

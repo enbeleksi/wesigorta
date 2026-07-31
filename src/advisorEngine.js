@@ -36,7 +36,6 @@ const {
 } = require("./validators");
 const flows = require("./flows");
 const conversationEngine = require("./conversationEngine");
-const sozlukSSS = require("./sozlukSSS");
 const { gunSelamlamasi } = require("./gunSelamlama");
 const musteriProfilStore = require("./musteriProfilStore");
 const { belgeleriTekPdfeBirlestir } = require("./pdfBirlestir");
@@ -1043,7 +1042,7 @@ const ANA_MENU_SECENEKLERI = [
   "Yenileme Takibi Ekle",
   "BES Fonları",
   "Doküman Merkezi",
-  "SSS",
+  "Sık Sorulan Sorular",
   "Performansım"
 ];
 
@@ -2387,16 +2386,23 @@ async function yenilemelerimGoster(from, session) {
   await devamMenuGoster(from, session);
 }
 
-// --- SSS: sozlukSSS.js'teki TUM terim/urun aciklamalarini danismana dogrudan
-// gosterir (27.07.2026 eklendi, kullanicinin talebi). sozlukSSS.js'in musteri
-// tarafindaki otomatik "X nedir?" tetiklemesinden BAGIMSIZ, ayri bir giris
-// noktasi - danisman menuden tikladiginda TUM icerigi (soru kalibi beklemeden)
-// gorur.
-async function sssGoster(from, session) {
-  const [terimlerMetni, urunlerMetni] = sozlukSSS.tumSssIcerigiMesajlari();
-  await sendText(from, terimlerMetni);
-  await sendText(from, urunlerMetni);
-  await devamMenuGoster(from, session);
+// --- Sık Sorulan Sorular (danisman tarafi) ---
+// 27.07.2026'da eklenen ilk versiyon, sozlukSSS.js'teki TUM terim/urun
+// aciklamalarini tek seferde (soru kalibi beklemeden) doküyordu. 31.07.2026'da
+// kullanicinin talebiyle MUSTERI tarafiyla AYNI formata donduruldu: once
+// hangi urunle ilgili sorusu oldugu soruluyor (conversationEngine.js'teki
+// INFO_PRODUCT_LABELS - musteri tarafiyla BIREBIR AYNI liste), ardindan o
+// urunun PDF'ine dayanan serbest soru-cevap moduna (BILGI_SORU_MODULLERI)
+// giriliyor - boylece TSS/ÖSS/Doğum Sigortası icin danisman da musteriyle
+// AYNI dogru/guncel bilgiyi, AYNI motordan alir.
+async function sssUrunSecBaslat(from, session) {
+  session.state = "DANISMAN_SSS_URUN_SEC";
+  await sendList(
+    from,
+    "Hangi ürünle ilgili sorunuz var?",
+    "Seçin",
+    conversationEngine.INFO_PRODUCT_LABELS
+  );
 }
 
 // --- BES Fonları ---
@@ -3094,8 +3100,8 @@ async function handleAdvisorMessage(from, parsed) {
         await formUrunSec(from, session);
         return;
       }
-      if (userText === "SSS") {
-        await sssGoster(from, session);
+      if (userText === "Sık Sorulan Sorular") {
+        await sssUrunSecBaslat(from, session);
         return;
       }
       if (userText === "Performansım") {
@@ -3701,6 +3707,53 @@ async function handleAdvisorMessage(from, parsed) {
       }
       session.yenilemeVerisi.bitisTarihiMs = tarihiMsYap(userText);
       await yenilemeTamamla(from, session);
+      return;
+    }
+
+    // --- Sık Sorulan Sorular: urun secimi (musteri tarafindaki ASK_INFO_PRODUCT
+    // ile AYNI liste/mantik) ---
+    case "DANISMAN_SSS_URUN_SEC": {
+      const matchedInfoLabel = matchOption(userText, conversationEngine.INFO_PRODUCT_LABELS);
+      if (!matchedInfoLabel) {
+        await sendList(
+          from,
+          "Üzgünüm, listeden bir seçenek seçmeniz gerekiyor. Lütfen tekrar seçin:",
+          "Seçin",
+          conversationEngine.INFO_PRODUCT_LABELS
+        );
+        return;
+      }
+      const infoIdx = conversationEngine.INFO_PRODUCT_LABELS.indexOf(matchedInfoLabel);
+      const infoKey = conversationEngine.INFO_PRODUCT_KEYS[infoIdx];
+
+      if (conversationEngine.BILGI_SORU_MODULLERI[infoKey]) {
+        session.state = "DANISMAN_SSS_SORU";
+        session.danismanSssUrunAnahtari = infoKey;
+        await sendText(
+          from,
+          `${conversationEngine.INFO_LABEL_BY_KEY[infoKey]} ile ilgili merak ettiğiniz her şeyi sorabilirsiniz - ` +
+            "örneğin bir hastalığın/tedavinin poliçe kapsamında olup olmadığı, bekleme süreleri, " +
+            "istisnalar vb. 😊\n\nSorunuzu yazabilirsiniz."
+        );
+      } else {
+        await sendText(
+          from,
+          `${conversationEngine.INFO_LABEL_BY_KEY[infoKey]} için şu an otomatik bilgi hizmetimiz bulunmuyor. 🙏`
+        );
+        await devamMenuGoster(from, session);
+      }
+      return;
+    }
+
+    // --- Sık Sorulan Sorular: PDF'e dayanan serbest soru-cevap (musteri
+    // tarafindaki URUN_BILGI_SORU ile AYNI moduller/mantik) ---
+    case "DANISMAN_SSS_SORU": {
+      const modul =
+        conversationEngine.BILGI_SORU_MODULLERI[session.danismanSssUrunAnahtari] ||
+        conversationEngine.BILGI_SORU_MODULLERI.tss;
+      const cevap = await modul.soruyaCevapVer(userText);
+      await sendText(from, cevap);
+      await sendText(from, "Başka bir sorunuz var mı? Yoksa ana menüye dönmek için \"menü\" yazabilirsiniz. 😊");
       return;
     }
 

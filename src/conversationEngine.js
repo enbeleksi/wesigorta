@@ -51,14 +51,18 @@ const PRODUCT_KEYS = Object.keys(flows).filter(
 // Ozet/bildirim mesajlarinda ise her zaman tam "label" kullanilmaya devam eder.
 const PRODUCT_LABELS = PRODUCT_KEYS.map((k) => flows[k].menuLabel || flows[k].label);
 
-// 30.07.2026 eklendi: musteri artik once "Teklif Almak İstiyorum" ("Bilgi
-// Almak İstiyorum" ile karsi karsiya) tercihini yapiyor. "Bilgi Almak
-// İstiyorum" secilirse urun listesi ayni sekilde gosteriliyor, ancak
-// sonunda (su an SADECE) TSS/Ozel Saglik icin serbest soru-cevap moduna
-// (bkz. tssOzelSartSSS.js) giriliyor - diger urunler icin henuz otomatik
-// bir bilgi servisi olmadigindan danismana yonlendiriliyor.
-const INTENT_SORUSU = "Size nasıl yardımcı olabiliriz?";
-const INTENT_SECENEKLERI = ["Teklif Almak İstiyorum", "Bilgi Almak İstiyorum"];
+// 31.07.2026: 30.07.2026'da eklenen ayri "Teklif Almak İstiyorum"/"Bilgi Almak
+// İstiyorum" on-secim ekrani (ASK_INTENT) KALDIRILDI - musteri "merhaba"
+// dedikten (isim/KVKK) sonra dogrudan urun secim listesine (ASK_PRODUCT)
+// gidiyor, tipki bu ekran eklenmeden onceki gibi. Bilgi/SSS akisina artik bu
+// TEK urun listesinin EN ALTINA eklenen "Sık Sorulan Sorular" secenegiyle
+// giriliyor: secilince urun listesi TEKRAR gosteriliyor (ASK_INFO_PRODUCT),
+// bir urun secilince o urunun soru-cevap moduna (varsa) giriliyor.
+const SSS_ETIKETI = "Sık Sorulan Sorular";
+// ASK_PRODUCT ekraninda gercek urun listesinin EN ALTINA SSS_ETIKETI de
+// ekleniyor - PRODUCT_LABELS/PRODUCT_KEYS teklif (startProductFlow) akisinda
+// HALA SADECE gercek urunleri icermeye devam ediyor, bu yuzden ayri bir liste.
+const ASK_PRODUCT_SECENEKLERI = [...PRODUCT_LABELS, SSS_ETIKETI];
 
 // ozel_saglik ve tss AYNI soru akisini (saglikUrunuSorulari) kullansa da,
 // FARKLI sigorta urunleri/policeleridir (biri Aksigorta TSS - Tamamlayici
@@ -322,8 +326,13 @@ async function kvkkSonrasiDevamEt(from, session) {
     const devredildi = await startProductFlow(from, session, key, { skipIntro: true });
     if (!devredildi) await askCurrentQuestion(from, session);
   } else if (session.name) {
-    session.state = "ASK_INTENT";
-    await sendChoiceQuestion(from, INTENT_SORUSU, INTENT_SECENEKLERI);
+    session.state = "ASK_PRODUCT";
+    await sendList(
+      from,
+      `Hangi sigorta ürünü için teklif almak istersiniz?`,
+      "Ürün Seç",
+      ASK_PRODUCT_SECENEKLERI
+    );
   } else {
     session.state = "ASK_NAME";
     await sendText(from, "Teşekkürler! 😊 Size hitap edebilmek adına isminizi ve soyisminizi öğrenebilir miyim?");
@@ -1057,62 +1066,74 @@ async function handleIncoming(from, message) {
   // Musteri konusmanin herhangi bir asamasinda "WE Sigorta kimdir/nedir" ya da
   // "adresiniz nedir" gibi bir soru sorarsa, akisi bozmadan cevap veririz ve
   // (eger bir soru bekleniyorsa) o soruyu tekrar hatirlatiriz.
-  const SIRKET_ANAHTAR_KELIMELER = [
-    "kimdir",
-    "kimsiniz",
-    "hakkinizda",
-    "hakkinda bilgi",
-    "ne is yapiyorsunuz",
-    "ne isle ugras",
-    "firma hakkinda",
-    "sirket hakkinda"
-  ];
-  const ADRES_ANAHTAR_KELIMELER = [
-    "adresiniz",
-    "neredesiniz",
-    "konumunuz",
-    "nerede bulunuyorsunuz",
-    "ofisiniz nerede",
-    "lokasyonunuz"
-  ];
+  // 31.07.2026 eklendi: "URUN_BILGI_SORU" durumundayken (Sık Sorulan Sorular /
+  // PDF'e dayali serbest soru-cevap modunda) musterinin yazdigi HER SEY
+  // dogrudan ilgili urunun soru-cevap modulune (bkz. asagida switch icindeki
+  // "URUN_BILGI_SORU" case'i) gitmeli - asagidaki SIRKET/ADRES anahtar
+  // kelime kontrolu ve sozlukSSS statik SSS sozlugu bu asamada ARADA
+  // KESINLIKLE DEVREYE GIRMEMELI. Aksi halde, ornegin musteri "Deviasyon
+  // hakkında bilgin var mı?" gibi TAMAMEN dogal bir hastalik/teminat sorusu
+  // sorduğunda (normalize edilince "hakkinda bilgi" alt dizesini icerdigi
+  // icin) yanlislikla sirket tanitim metni donuyor, musterinin asil sorusu
+  // hic soru-cevap motoruna ulasmiyordu (gercek musteri sikayeti). Bu yuzden
+  // bu kontrolleri sadece URUN_BILGI_SORU DISINDAKI durumlarda calistiriyoruz.
+  if (session.state !== "URUN_BILGI_SORU") {
+    const SIRKET_ANAHTAR_KELIMELER = [
+      "kimdir",
+      "kimsiniz",
+      "hakkinizda",
+      "ne is yapiyorsunuz",
+      "ne isle ugras",
+      "firma hakkinda",
+      "sirket hakkinda"
+    ];
+    const ADRES_ANAHTAR_KELIMELER = [
+      "adresiniz",
+      "neredesiniz",
+      "konumunuz",
+      "nerede bulunuyorsunuz",
+      "ofisiniz nerede",
+      "lokasyonunuz"
+    ];
 
-  const sirketSorusuMu = SIRKET_ANAHTAR_KELIMELER.some((k) => normalizedUserText.includes(k));
-  const adresSorusuMu = ADRES_ANAHTAR_KELIMELER.some((k) => normalizedUserText.includes(k));
+    const sirketSorusuMu = SIRKET_ANAHTAR_KELIMELER.some((k) => normalizedUserText.includes(k));
+    const adresSorusuMu = ADRES_ANAHTAR_KELIMELER.some((k) => normalizedUserText.includes(k));
 
-  if (sirketSorusuMu || adresSorusuMu) {
-    if (sirketSorusuMu) {
-      await sendText(
-        from,
-        "WE Sigorta, Ekşi Group'un 50 yılı aşkın deneyiminden güç alarak 2020 yılında Eskişehir'de kuruldu. 🏢\n\n" +
-          "İnşaat, otomotiv, akaryakıt, hukuk ve tarım gibi alanlarda yarım asırdır faaliyet gösteren Ekşi Group'un güvenilirlik ve yenilikçilik mirasını sigortacılığa taşıyoruz.\n\n" +
-          "10 yılı aşkın deneyimli, profesyonel ekibimizle hem sigorta hem Bireysel Emeklilik (BES) alanında hızlı, şeffaf ve güvenilir hizmet sunuyoruz. 😊"
-      );
+    if (sirketSorusuMu || adresSorusuMu) {
+      if (sirketSorusuMu) {
+        await sendText(
+          from,
+          "WE Sigorta, Ekşi Group'un 50 yılı aşkın deneyiminden güç alarak 2020 yılında Eskişehir'de kuruldu. 🏢\n\n" +
+            "İnşaat, otomotiv, akaryakıt, hukuk ve tarım gibi alanlarda yarım asırdır faaliyet gösteren Ekşi Group'un güvenilirlik ve yenilikçilik mirasını sigortacılığa taşıyoruz.\n\n" +
+            "10 yılı aşkın deneyimli, profesyonel ekibimizle hem sigorta hem Bireysel Emeklilik (BES) alanında hızlı, şeffaf ve güvenilir hizmet sunuyoruz. 😊"
+        );
+      }
+      if (adresSorusuMu) {
+        await sendText(from, "Adresimize buradan ulaşabilirsiniz: https://maps.app.goo.gl/TUD5pfWHQijNWetJA 📍");
+      }
+      // Bir soru bekleniyorsa (ASKING asamasindaysak), kaldigi yerden devam
+      // edebilsin diye o soruyu nazikce tekrar hatirlatiyoruz.
+      if (session.state === "ASKING") {
+        await askCurrentQuestion(from, session);
+      }
+      return;
     }
-    if (adresSorusuMu) {
-      await sendText(from, "Adresimize buradan ulaşabilirsiniz: https://maps.app.goo.gl/TUD5pfWHQijNWetJA 📍");
-    }
-    // Bir soru bekleniyorsa (ASKING asamasindaysak), kaldigi yerden devam
-    // edebilsin diye o soruyu nazikce tekrar hatirlatiyoruz.
-    if (session.state === "ASKING") {
-      await askCurrentQuestion(from, session);
-    }
-    return;
-  }
 
-  // Musteri sigortacilikla ilgili bir terimin ya da sundugumuz urunlerden
-  // birinin ne oldugunu sorarsa (orn. "muafiyet nedir?", "kasko nedir?"),
-  // akisi bozmadan kisa bir aciklama veririz - yukaridaki SIRKET/ADRES
-  // kontrolleriyle AYNI davranis deseni. sozlukSSS.js'deki soru-kalibi sarti
-  // sayesinde, musteri urun secim listesinde sadece urun adini SECMEK icin
-  // yazdiginda (orn. ASK_PRODUCT asamasinda "Kasko Sigortası") bu
-  // YANLISLIKLA bir SSS cevabina donusmez.
-  const sssCevabi = sozlukSSS.sssCevabiBul(userText);
-  if (sssCevabi) {
-    await sendText(from, sssCevabi);
-    if (session.state === "ASKING") {
-      await askCurrentQuestion(from, session);
+    // Musteri sigortacilikla ilgili bir terimin ya da sundugumuz urunlerden
+    // birinin ne oldugunu sorarsa (orn. "muafiyet nedir?", "kasko nedir?"),
+    // akisi bozmadan kisa bir aciklama veririz - yukaridaki SIRKET/ADRES
+    // kontrolleriyle AYNI davranis deseni. sozlukSSS.js'deki soru-kalibi sarti
+    // sayesinde, musteri urun secim listesinde sadece urun adini SECMEK icin
+    // yazdiginda (orn. ASK_PRODUCT asamasinda "Kasko Sigortası") bu
+    // YANLISLIKLA bir SSS cevabina donusmez.
+    const sssCevabi = sozlukSSS.sssCevabiBul(userText);
+    if (sssCevabi) {
+      await sendText(from, sssCevabi);
+      if (session.state === "ASKING") {
+        await askCurrentQuestion(from, session);
+      }
+      return;
     }
-    return;
   }
 
   // Kullanıcı her an "iptal" yazarak sıfırlayabilsin
@@ -1228,34 +1249,13 @@ async function handleIncoming(from, message) {
       // sonra tekrar yazdiginda (oturum tamamen sifirlanmis olsa bile) ismiyle
       // karsilanir ve isim tekrar sorulmaz.
       musteriProfilStore.profilGuncelle(from, { adSoyad: session.name });
-      session.state = "ASK_INTENT";
-      await sendChoiceQuestion(from, `Teşekkürler ${session.name}! ${INTENT_SORUSU}`, INTENT_SECENEKLERI);
-      break;
-    }
-
-    case "ASK_INTENT": {
-      const matchedIntent = matchOption(userText, INTENT_SECENEKLERI);
-      if (!matchedIntent) {
-        await sendChoiceQuestion(from, INTENT_SORUSU, INTENT_SECENEKLERI);
-        break;
-      }
-      if (matchedIntent === "Bilgi Almak İstiyorum") {
-        session.state = "ASK_INFO_PRODUCT";
-        await sendList(
-          from,
-          "Hangi ürünle ilgili bilgi almak istersiniz?",
-          "Ürün Seç",
-          INFO_PRODUCT_LABELS
-        );
-      } else {
-        session.state = "ASK_PRODUCT";
-        await sendList(
-          from,
-          `Hangi sigorta ürünü için teklif almak istersiniz?`,
-          "Ürün Seç",
-          PRODUCT_LABELS
-        );
-      }
+      session.state = "ASK_PRODUCT";
+      await sendList(
+        from,
+        `Teşekkürler ${session.name}! Hangi sigorta ürünü için teklif almak istersiniz?`,
+        "Ürün Seç",
+        ASK_PRODUCT_SECENEKLERI
+      );
       break;
     }
 
@@ -1263,14 +1263,26 @@ async function handleIncoming(from, message) {
       // WhatsApp liste mesajlarinda secenekler 24 karakterle sinirli, uzun urun
       // isimleri (orn. "Prim Iadeli Hayat Sigortasi") kesilerek geri donebiliyor.
       // Bu yuzden tam eslesme yerine matchOption'in esnek/on-ek toleransli
-      // eslestirmesini kullaniyoruz.
-      const matchedLabel = matchOption(userText, PRODUCT_LABELS);
+      // eslestirmesini kullaniyoruz. Liste, gercek urunlere ek olarak EN ALTA
+      // "Sık Sorulan Sorular" secenegini de iceriyor (bkz. ASK_PRODUCT_SECENEKLERI) -
+      // bu secilirse musteri urun-secimli SSS akisina (ASK_INFO_PRODUCT) yonlendirilir.
+      const matchedLabel = matchOption(userText, ASK_PRODUCT_SECENEKLERI);
       if (!matchedLabel) {
         await sendList(
           from,
           "Üzgünüm, listeden bir seçenek seçmeniz gerekiyor. Lütfen tekrar seçin:",
           "Ürün Seç",
-          PRODUCT_LABELS
+          ASK_PRODUCT_SECENEKLERI
+        );
+        break;
+      }
+      if (matchedLabel === SSS_ETIKETI) {
+        session.state = "ASK_INFO_PRODUCT";
+        await sendList(
+          from,
+          "Hangi ürünle ilgili sorunuz var?",
+          "Ürün Seç",
+          INFO_PRODUCT_LABELS
         );
         break;
       }
@@ -1939,5 +1951,14 @@ module.exports = {
   aracEkBilgiSatirlariOlustur,
   saglikAileSorusunuSor,
   saglikAileCevabiIsle,
-  saglikKisileriOzetSatirlariOlustur
+  saglikKisileriOzetSatirlariOlustur,
+  // 31.07.2026 eklendi: danismanlarin WhatsApp panelindeki "Sık Sorulan
+  // Sorular" ozelligi (advisorEngine.js -> sssUrunSecBaslat/DANISMAN_SSS_*),
+  // musteri tarafindakiyle AYNI urun listesini ve AYNI PDF'e dayanan
+  // soru-cevap modullerini kullaniyor - boylece iki tarafta ayri ayri
+  // bakim gerektiren, birbirinden sapabilecek iki liste/mantik olmuyor.
+  BILGI_SORU_MODULLERI,
+  INFO_PRODUCT_KEYS,
+  INFO_PRODUCT_LABELS,
+  INFO_LABEL_BY_KEY
 };
