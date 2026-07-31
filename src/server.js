@@ -501,12 +501,31 @@ app.get("/api/panel/gunluk-ozet-sablonu-olustur", panelAuth, async (req, res) =>
 // "ayrı şablon daha mantıklı" geri bildirimi uzerine (gunluk ozet icin daha
 // once yasanan AYNI sorun: bu bildirimler de eskiden AGENT_DETAY_TEMPLATE_NAME
 // ile, yani "YENI TALEP" basligiyla gonderiliyordu - bir randevu/arama
-// hatirlatmasinin basinda bu baslik anlamsiz duruyor). Gunluk ozet
-// sablonuyla AYNI tasarim: HEADER SABIT (degiskensiz, emoji/yeni satir/
-// markdown YOK - bkz. yukaridaki 31.07.2026 tarihli NOT, Meta bunlari HEADER'da
-// kabul etmiyor), BODY ise TEK bir {{detay}} degiskeninden olusuyor - boylece
-// musteri adi/telefon/tarih/yer gibi HER BILDIRIMDE DEGISEN tum icerik tek
-// bir parametre olarak geciyor, Meta'nin UTILITY kategorisi kuralina uygun.
+// hatirlatmasinin basinda bu baslik anlamsiz duruyor).
+//
+// NOT (31.07.2026, ilk deneme - v1): "randevu_defteri_bildirimi_v1", HEADER
+// "Randevu Defteri Bildirimi", BODY ornegi "📅 Yeni Randevu\n\nDanışman:
+// Enbel\nMüşteri: Ahmet Yılmaz (...)..." seklindeydi - Meta bunu OTOMATIK
+// OLARAK "MARKETING" kategorisine cevirip REDDETTI (rejected_reason muhtemelen
+// TAG_CONTENT_MISMATCH - bkz. /api/panel/sablon-detay/:id ile kontrol
+// edilebilir). Sebebi: Meta'nin UTILITY tanimi mesajin ALICININ KENDI
+// islemiyle ilgili olmasini bekliyor - bizimki ise alicinin (danismanin)
+// KENDI degil, BASKA BIRININ (musterinin) randevusu hakkinda bir ekip
+// bildirimi. "Randevu" kelimesinin basliktaki agirligi, emoji ve "Yeni
+// Randevu/Danışman:/Müşteri:" seklindeki rezervasyon-fisi gibi gorunen
+// katmanli format da siniflandiriciyi MARKETING'e itmis olabilir (zaten
+// AGENT_DETAY_TEMPLATE_NAME - "Yeni Talep" - AYNI turde bir ekip bildirimi
+// oldugu halde UTILITY olarak onaylanmisti, yani bu tur icerigin UTILITY
+// gecmesi imkansiz degil - sadece bu spesifik ifade bicimi sikinti cikardi).
+//
+// v2 DUZELTMELERI: HEADER'dan "randevu" kelimesi tamamen cikarildi (notrsu
+// "Ekip Bildirimi"), ornek metin emojisiz ve TEK bir duz cumle haline
+// getirildi (rezervasyon fisi gibi degil, sade bir durum/log cumlesi), Yeni
+// Randevu/Danışman:/Müşteri: gibi alt basliklar kaldirildi. BODY hala TEK bir
+// {{detay}} degiskeninden olusuyor - calisan koda (randevuDefteriHatirlatmaGonder)
+// HICBIR DEGISIKLIK gerekmiyor, çünkü gerçek çalışma zamanı mesajı (emoji dahil)
+// bu ornek metinden BAGIMSIZ - Meta'nin inceledigi sadece burada gönderilen
+// ornek, gercek parametre degeri her seferinde farkli olabilir.
 // Meta onayi (genelde dakikalar-birkac saat surer) WhatsApp Manager > Message
 // Templates ekranindan takip edilebilir. Onaylandiktan sonra sablon adini
 // Railway'de RANDEVU_DEFTERI_TEMPLATE_NAME olarak tanimlamaniz yeterli - o ana
@@ -517,11 +536,11 @@ app.get("/api/panel/gunluk-ozet-sablonu-olustur", panelAuth, async (req, res) =>
 app.get("/api/panel/randevu-defteri-sablonu-olustur", panelAuth, async (req, res) => {
   try {
     const sonuc = await sablonOlustur({
-      name: "randevu_defteri_bildirimi_v1",
+      name: "randevu_defteri_bildirimi_v2",
       language: "tr",
       category: "UTILITY",
       components: [
-        { type: "HEADER", format: "TEXT", text: "Randevu Defteri Bildirimi" },
+        { type: "HEADER", format: "TEXT", text: "Ekip Bildirimi" },
         {
           type: "BODY",
           text: "{{detay}}",
@@ -529,8 +548,7 @@ app.get("/api/panel/randevu-defteri-sablonu-olustur", panelAuth, async (req, res
             body_text_named_params: [
               {
                 param_name: "detay",
-                example:
-                  "📅 Yeni Randevu\n\nDanışman: Enbel\nMüşteri: Ahmet Yılmaz (905321112233)\nTarih: 10.08.2026 14:30\nYer: Kadıköy Ofis"
+                example: "Enbel danışmanı Ahmet Yılmaz (905321112233) ile 10.08.2026 14:30 tarihinde Kadıköy Ofis'te görüşme planladı."
               }
             ]
           }
