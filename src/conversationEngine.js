@@ -1813,6 +1813,39 @@ async function hatirlatmaGonder(numara, metin) {
   await sendText(numara, metin); // basarisiz olursa hata cagirana ULASIR (yukaridaki NOT'a bakin)
 }
 
+// 31.07.2026 eklendi: gunluk 09:30 "Bekleyen İşler" ozeti icin AYRI bir
+// gonderim fonksiyonu. Bu ozet bir sure hatirlatmaGonder ile (yani
+// AGENT_DETAY_TEMPLATE_NAME sablonuyla) gonderiliyordu - bu, mesajin HER GUN
+// kesin ulasmasini sagliyordu (bkz. server.js'teki 31.07.2026 tarihli detayli
+// yorum, 131047 "Re-engagement message" hatasi), AMA o sablonun basligi
+// "YENI TALEP" bildirimleri icin onaylanmisti ("Yeni bir talep geldi!" gibi) -
+// sabah sabah gelen bir gunluk ozetin basinda bu baslik anlamsiz/tuhaf
+// duruyordu (kullanicinin 31.07.2026 geri bildirimi). Bu yuzden GUNLUK OZETE
+// OZEL, dogru basliga sahip AYRI bir sablon (GUNLUK_OZET_TEMPLATE_NAME - bkz.
+// server.js'teki /api/panel/gunluk-ozet-sablonu-olustur, .env.example)
+// hazirlandi. Meta onayi ZAMAN alabilecegi (ve her ortamda hemen
+// ayarlanmis olmayabilecegi) icin: ONCE bu YENI ozel sablon denenir (dogru
+// baslik + guvenilir teslimat), o basarisiz olursa VEYA henuz
+// tanimlanmamissa (env degiskeni bos, yani sablon Meta onayini bekliyor
+// olabilir) ESKI genel AGENT_DETAY_TEMPLATE_NAME'e (hatirlatmaGonder)
+// dusulur - boylece gecis surecinde bile guvenilirlik HIC kaybedilmez,
+// sadece baslik gecici olarak eski/yanlis kalir.
+async function gunlukOzetGonder(numara, metin) {
+  const gunlukSablonAdi = process.env.GUNLUK_OZET_TEMPLATE_NAME;
+  if (gunlukSablonAdi) {
+    try {
+      await sendTemplate(numara, gunlukSablonAdi, "tr", { detay: sablonParametresiIcinTemizle(metin) }, metin);
+      return;
+    } catch (err) {
+      console.error(
+        "Günlük özet şablonu gönderilemedi, genel hatırlatma şablonuna düşülüyor:",
+        err?.response?.data || err.message
+      );
+    }
+  }
+  await hatirlatmaGonder(numara, metin); // basarisiz olursa hata cagirana ULASIR (hatirlatmaGonder'daki NOT'a bakin)
+}
+
 // 27.07.2026 eklendi: gunluk bekleyen is ozeti gibi COK SATIRLI (birden fazla
 // gercek satir sonu icheren) mesajlar icin. hatirlatmaGonder'daki
 // AGENT_DETAY_TEMPLATE_NAME sablonu "YENI TALEP" bildirimleri icin Meta'ya
@@ -1925,6 +1958,7 @@ async function notEklendiBildirimiGonder(lead, notMetni, ekleyenAdi, ekleyenNuma
 module.exports = {
   handleIncoming,
   hatirlatmaGonder,
+  gunlukOzetGonder,
   cokSatirliMesajGonder,
   memnuniyetAnketiGonder,
   notEklendiBildirimiGonder,

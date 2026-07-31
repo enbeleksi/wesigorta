@@ -6,7 +6,7 @@ const multer = require("multer");
 const {
   handleIncoming,
   hatirlatmaGonder,
-  cokSatirliMesajGonder,
+  gunlukOzetGonder,
   memnuniyetAnketiGonder,
   notEklendiBildirimiGonder,
   yeniTalepAksiyonHookAyarla,
@@ -419,6 +419,61 @@ app.get("/api/panel/guvenlik-kodu-sablonu-olustur", panelAuth, async (req, res) 
     );
   } catch (err) {
     console.error("Sablon olusturma hatasi:", err?.response?.data || err.message);
+    res.status(500).send(
+      `<pre style="font-family:monospace; padding:20px; color:#c00;">❌ Hata:\n\n${JSON.stringify(err?.response?.data || err.message, null, 2)}</pre>`
+    );
+  }
+});
+
+// --- Bir kerelik kurulum: gunluk 09:30 "Bekleyen İşler" ozeti icin, EKIP-ICI
+// (musteriye degil, danismanlara/Bahadır'a/Enbel'e) bir UTILITY sablonu
+// olusturur. 31.07.2026'da eklendi - eskiden bu ozet, "YENI TALEP" bildirimi
+// icin onaylanmis genel AGENT_DETAY_TEMPLATE_NAME sablonuyla gonderiliyordu;
+// bu, mesajin HER GUN (24 saatlik musteri penceresi kapali olsa bile) kesin
+// ulasmasini sagliyordu ama basligi ("Yeni bir talep geldi!" gibi) sabah
+// sabah gelen bir ozetle uyusmuyordu (kullanicinin geri bildirimi). Header
+// SABIT (degiskensiz) - sadece "Günlük Özet" basligi tasiyor; body ise TEK bir
+// {{detay}} degiskeninden olusuyor (AGENT_DETAY_TEMPLATE_NAME ile AYNI, zaten
+// bu hesapta calistigi kanitlanmis format) - boylece gunaydin mesaji/bekleyen
+// isler listesi/kapanis cumlesi gibi HER GUN DEGISEN tum icerik tek bir
+// parametre olarak geciyor, hicbir sabit/tahmini metin uydurulmuyor (Meta'nin
+// UTILITY kategorisi kuralina uygun - bkz. asagidaki musteri-bilgilendirme
+// sablonundaki NOT, orada da promosyon dili yuzunden ilk deneme reddedilmisti).
+// Meta onayi (genelde dakikalar-birkac saat surer) WhatsApp Manager > Message
+// Templates ekranindan takip edilebilir. Onaylandiktan sonra sablon adini
+// Railway'de GUNLUK_OZET_TEMPLATE_NAME olarak tanimlamaniz yeterli - o ana
+// kadar (ve tanimlanana kadar) ozet otomatik olarak eski AGENT_DETAY_TEMPLATE_NAME
+// ile gonderilmeye devam eder (bkz. conversationEngine.js'teki gunlukOzetGonder),
+// yani gecis sirasinda hicbir gun mesaj kaybolmaz. Kullanildiktan sonra bu
+// route silinebilir.
+app.get("/api/panel/gunluk-ozet-sablonu-olustur", panelAuth, async (req, res) => {
+  try {
+    const sonuc = await sablonOlustur({
+      name: "gunluk_bekleyen_is_ozeti_v1",
+      language: "tr",
+      category: "UTILITY",
+      components: [
+        { type: "HEADER", format: "TEXT", text: "☀️ Günlük Özet" },
+        {
+          type: "BODY",
+          text: "{{detay}}",
+          example: {
+            body_text_named_params: [
+              {
+                param_name: "detay",
+                example:
+                  "Günaydın! Bugün bekleyen işleriniz:\n\n• Ahmet Yılmaz - Kasko Sigortası - 2 gündür açık\n\nAçık talepleriniz aşağıda, detay görmek istediğinizi seçin:"
+              }
+            ]
+          }
+        }
+      ]
+    });
+    res.send(
+      `<pre style="font-family:monospace; padding:20px;">✅ Şablon isteği gönderildi.\n\n${JSON.stringify(sonuc.data, null, 2)}</pre>`
+    );
+  } catch (err) {
+    console.error("Gunluk ozet sablonu olusturma hatasi:", err?.response?.data || err.message);
     res.status(500).send(
       `<pre style="font-family:monospace; padding:20px; color:#c00;">❌ Hata:\n\n${JSON.stringify(err?.response?.data || err.message, null, 2)}</pre>`
     );
@@ -1310,12 +1365,29 @@ function kisiselBolumMetni(kisiselIsler) {
 //   dolasilir - boylece bekleyen isi olmayan biri de mutlaka bir mesaj alir.
 // - Bahadır ve Enbel icin TEK bir mesaj gonderilir - "Kendi bekleyen işleriniz"
 //   ve "Ekibin ... bekleyen işleri" ayni mesajda iki ayri bolum olarak.
-// - Gonderim artik hatirlatmaGonder yerine cokSatirliMesajGonder ile yapiliyor
-//   (bkz. conversationEngine.js) - boylece pencere acikken satir sonlari VE
-//   baslik dogru gorunur.
+// - Gonderim o tarihte hatirlatmaGonder yerine cokSatirliMesajGonder ile
+//   yapilmaya baslanmisti (bkz. conversationEngine.js) - boylece pencere
+//   acikken satir sonlari VE baslik dogru gorunuyordu. 31.07.2026'da bu TEKRAR
+//   hatirlatmaGonder'a DONDURULDU - asagidaki 31.07.2026 tarihli yorumda
+//   aciklanan asenkron teslim hatasi (131047) yuzunden - guvenilirlik, iyi
+//   formatlanmis ama bazen HIC ULASMAYAN bir mesajdan daha onemli.
+// 31.07.2026 eklendi: bu fonksiyon her 60 saniyede bir (HATIRLATMA_KONTROL_SIKLIGI_MS)
+// cagriliyor ve eskiden SADECE "saat === 9 && dakika === 30" olan TEK dakikada
+// mesaj gonderiyordu. Bu, tek bir kacirilan tick'e karsi kirilgandi: sunucu tam
+// o dakika yeniden baslatiliyorsa/deploy ediliyorsa (orn. bir kod guncellemesi
+// sirasinda), event loop kisa sureli bir islemle (agir senkron is, GC duraklamasi
+// vb.) meşgulse, ya da setInterval o dakikaya denk gelen tick'i (nadiren de olsa)
+// bir-iki saniye kayirsa, gunun mesaji SESSIZCE HIC GONDERILMIYORDU - bir sonraki
+// kontrolde artik dakika 30'u gectigi icin bir daha o gun hic denenmiyordu
+// (kullanicinin bildirdigi "yine günaydın mesajı gelmedi" sikayetinin en olasi
+// teknik sebebi budur). Bunun yerine artik 09:30-09:35 arasi 5 dakikalik bir
+// tolerans penceresi kullaniliyor - gunlukOzetGonderilenGun bayragi SAYESINDE
+// bu pencere icinde birden fazla kez gonderilmiyor (ilk basarili/denenen
+// dakikada hemen isaretleniyor), ama tek bir tick kacsa bile pencere icindeki
+// sonraki tick'lerden biri mesaji yine de gonderebiliyor.
 async function gunlukBekleyenIsOzetiKontrolEt() {
   const { saat, dakika, gunAnahtari } = simdiTurkiyeSaatineGore();
-  if (saat !== 9 || dakika !== 30) return;
+  if (saat !== 9 || dakika < 30 || dakika > 35) return;
   if (gunlukOzetGonderilenGun === gunAnahtari) return;
   gunlukOzetGonderilenGun = gunAnahtari; // ilk once isaretle - gonderim sirasinda bir hata olsa bile ayni dakika icinde tekrar tekrar denenmesin
 
@@ -1371,8 +1443,42 @@ async function gunlukBekleyenIsOzetiKontrolEt() {
       logEtiketi = `${danisman.name} (${kisiselIsler.length} iş)`;
     }
 
+    // 31.07.2026 DUZELTILDI: burada eskiden cokSatirliMesajGonder kullaniliyordu
+    // (once DUZ METIN dener, SADECE senkron/anlik bir hata donerse sablona
+    // duser). Railway loglarinda (31.07.2026 sabahi, kullanicinin "yine
+    // günaydın mesajı gelmedi" bildirimi uzerine incelendi) goruldu ki: WhatsApp
+    // bu mesaji ANLIK olarak KABUL edip (kod "gonderildi" diye logluyor, hic
+    // senkron hata firlamiyor), birkac saniye SONRA, AYRI bir webhook durum
+    // bildirimiyle "131047: Re-engagement message" (24 saatlik musteri
+    // penceresi kapali) diyerek asenkron olarak REDDEDIYOR - yani mesaj
+    // TELEFONA HIC ULASMIYOR ama cokSatirliMesajGonder bunu bir "basarisiz
+    // deneme" olarak GOREMEDIGI icin sablona hic DUSMUYOR (bkz. webhook
+    // handler'daki "asenkron durum bildirimi" loglari). O sabah butun 7
+    // danismana da AYNI hata ile mesaj hic ulasmamisti.
+    //
+    // Bu GUNLUK OZET zaten proaktif/isletme-baslatilan bir bildirim (musteri/
+    // danisman az once yazdigi icin degil, SAAT 09:30 oldugu icin gonderiliyor)
+    // - yani WhatsApp'in sablon (template) mekanizmasinin tam olarak var oldugu
+    // senaryo bu. Ilk duzeltmede (ayni gun icinde) DOGRUDAN hatirlatmaGonder
+    // kullanilmaya baslanmisti - bu, 24 saatlik pencere ister acik ister kapali
+    // olsun mesajin HER GUN kesin ulasmasini sagliyordu, AMA hatirlatmaGonder'in
+    // kullandigi genel AGENT_DETAY_TEMPLATE_NAME sablonu "YENI TALEP" bildirimi
+    // icin onaylanmisti - basligi ("Yeni bir talep geldi!" gibi) sabah sabah
+    // gelen bir ozetin basinda anlamsiz duruyordu (kullanicinin ayni gunku geri
+    // bildirimi). Bu yuzden artik GUNLUK OZETE OZEL, dogru basliga sahip AYRI
+    // bir sablonu (GUNLUK_OZET_TEMPLATE_NAME) once deneyen gunlukOzetGonder
+    // kullaniliyor - bkz. conversationEngine.js'teki gunlukOzetGonder ve
+    // asagidaki /api/panel/gunluk-ozet-sablonu-olustur (bu sablonu Meta'ya
+    // onaylatmak icin). Yeni sablon henuz tanimlanmamis/onaylanmamissa
+    // (GUNLUK_OZET_TEMPLATE_NAME bos), gunlukOzetGonder otomatik olarak eski
+    // (guvenilir ama yanlis basikli) AGENT_DETAY_TEMPLATE_NAME'e duser - yani
+    // bu gecis sirasinda dahi guvenilirlik hic kaybedilmiyor. Sablon
+    // parametreleri (her iki sablon icin de) gercek satir sonu icermedigi icin
+    // cok satirli liste hala " • " ile tek satira sikisiyor (bkz.
+    // sablonParametresiIcinTemizle yorumu) - bu, WhatsApp'in TUM sablonlar icin
+    // gecerli, degistirilemeyen bir platform kisitlamasi.
     try {
-      await cokSatirliMesajGonder(danisman.number, mesaj);
+      await gunlukOzetGonder(danisman.number, mesaj);
       console.log(`Gunluk bekleyen is ozeti gonderildi: ${logEtiketi}`);
     } catch (err) {
       console.error(`Gunluk bekleyen is ozeti gonderilemedi (${danisman.name}):`, err?.response?.data || err.message);
