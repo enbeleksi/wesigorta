@@ -289,7 +289,22 @@ function saglikUrunuSorulari() {
     { ...SIGORTA_ETTIREN_KENDISI_MI_SORU },
     { ...SIGORTA_ETTIREN_AD_SOYAD_SORU },
     { ...SIGORTA_ETTIREN_DOGUM_TARIHI_SORU },
-    { ...SIGORTA_ETTIREN_TC_KIMLIK_SORU }
+    { ...SIGORTA_ETTIREN_TC_KIMLIK_SORU },
+    // 31.07.2026 eklendi: kullanicinin talebi uzerine - Acibadem'in ayri bir
+    // urunu olan "Doğum Sigortası" (hamilelik/doğum teminati paketi), ÖSS/TSS
+    // teklifiyle BIRLIKTE eklenebilen bagimsiz bir police oldugu icin, ozel
+    // bir soru formu/akisi olusturmak yerine teklif akisinin SONUNA kisa bir
+    // evet/hayir sorusu ekleniyor - cevabi danismana giden ozette/lead notunda
+    // otomatik gorunur (bkz. conversationEngine.js finishFlow, ID_KISA_ETIKET),
+    // fiyat hesaplama YAPILMAZ, sadece danismana "musteri bunu da istiyor"
+    // bilgisini tasir.
+    {
+      id: "dogum_sigortasi_eklensin",
+      text: "Son bir soru: Doğum Sigortası (hamilelik/doğum teminatı) da eklemek ister misiniz? Ayrı bir poliçe olarak sunulur, danışmanınız detaylarını sizinle paylaşacaktır.",
+      danismanText: "Doğum Sigortası (hamilelik/doğum teminatı) da eklensin mi?",
+      type: "choice",
+      options: ["Evet", "Hayır"]
+    }
   ];
 }
 

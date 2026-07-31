@@ -7,6 +7,9 @@ const messageLog = require("./messageLog");
 const leadStore = require("./leadStore");
 const musteriProfilStore = require("./musteriProfilStore");
 const sozlukSSS = require("./sozlukSSS");
+const tssOzelSartSSS = require("./tssOzelSartSSS");
+const ozelSaglikOzelSartSSS = require("./ozelSaglikOzelSartSSS");
+const dogumSigortasiOzelSartSSS = require("./dogumSigortasiOzelSartSSS");
 const flows = require("./flows");
 const { baskasiIcinMi, sehirAdiBul } = flows;
 const { adSoyadGecerliMi, tcKimlikGecerliMi, tarihGecerliMi, telefonGecerliMi } = require("./validators");
@@ -47,6 +50,50 @@ const PRODUCT_KEYS = Object.keys(flows).filter(
 // isimlerinde flows.js'deki kisa "menuLabel" kullanilir; yoksa tam "label" kullanilir.
 // Ozet/bildirim mesajlarinda ise her zaman tam "label" kullanilmaya devam eder.
 const PRODUCT_LABELS = PRODUCT_KEYS.map((k) => flows[k].menuLabel || flows[k].label);
+
+// 30.07.2026 eklendi: musteri artik once "Teklif Almak İstiyorum" ("Bilgi
+// Almak İstiyorum" ile karsi karsiya) tercihini yapiyor. "Bilgi Almak
+// İstiyorum" secilirse urun listesi ayni sekilde gosteriliyor, ancak
+// sonunda (su an SADECE) TSS/Ozel Saglik icin serbest soru-cevap moduna
+// (bkz. tssOzelSartSSS.js) giriliyor - diger urunler icin henuz otomatik
+// bir bilgi servisi olmadigindan danismana yonlendiriliyor.
+const INTENT_SORUSU = "Size nasıl yardımcı olabiliriz?";
+const INTENT_SECENEKLERI = ["Teklif Almak İstiyorum", "Bilgi Almak İstiyorum"];
+
+// ozel_saglik ve tss AYNI soru akisini (saglikUrunuSorulari) kullansa da,
+// FARKLI sigorta urunleri/policeleridir (biri Aksigorta TSS - Tamamlayici
+// Saglik, digeri Aksigorta Aksaglik - Ozel Saglik Sigortasi) - kullanicinin
+// 30.07.2026'da netlestirdigi gibi ("Ayri belge, ayri cevap") her biri
+// KENDI PDF'ine dayanan BAGIMSIZ bir soru-cevap modulune sahip. Buradaki
+// anahtar, ASK_INFO_PRODUCT'ta hangi urun icin hangi modulun
+// kullanilacagini (ve bilgi hizmeti sunulup sunulmadigini) belirler.
+//
+const BILGI_SORU_MODULLERI = {
+  tss: tssOzelSartSSS,
+  ozel_saglik: ozelSaglikOzelSartSSS,
+  dogum_sigortasi_bilgi: dogumSigortasiOzelSartSSS
+};
+
+// 31.07.2026 eklendi: "Doğum Sigortası" (Acıbadem'in ayrı ürünü), "Teklif
+// Almak İstiyorum" tarafında KENDİ BAŞINA bir ürün DEĞİL - ÖSS/TSS teklifiyle
+// birlikte eklenebilen bir ek poliçe (bkz. flows.js'teki
+// "dogum_sigortasi_eklensin" sorusu, ÖSS/TSS akışının sonuna eklendi). Ama
+// "Bilgi Almak İstiyorum" tarafında kendi başına bir soru-cevap seçeneği
+// olarak sunuluyor - bu yüzden PRODUCT_KEYS/PRODUCT_LABELS'a (teklif akışını
+// besleyen liste) KARIŞTIRMADAN, SADECE bilgi akışı için ayrı bir liste
+// oluşturuyoruz.
+const DOGUM_SIGORTASI_BILGI_ANAHTARI = "dogum_sigortasi_bilgi";
+const DOGUM_SIGORTASI_BILGI_ETIKETI = "Doğum Sigortası";
+const INFO_PRODUCT_KEYS = [...PRODUCT_KEYS, DOGUM_SIGORTASI_BILGI_ANAHTARI];
+const INFO_PRODUCT_LABELS = [...PRODUCT_LABELS, DOGUM_SIGORTASI_BILGI_ETIKETI];
+// ASK_INFO_PRODUCT'ta hem "hangi urun icin bilgi hizmeti tanitim mesaji
+// gosterilecek" hem de "desteklenmeyen urun" fallback mesajinda urun adini
+// yazdirmak icin - flows[key].label DOGUM_SIGORTASI_BILGI_ANAHTARI icin
+// calismaz (flows.js'te gercek bir urun degil), bu yuzden tek bir haritada
+// topluyoruz.
+const INFO_LABEL_BY_KEY = Object.fromEntries(
+  INFO_PRODUCT_KEYS.map((k, i) => [k, INFO_PRODUCT_LABELS[i]])
+);
 
 // KVKK (Kisisel Verilerin Korunmasi Kanunu) onay metni. Musteriden herhangi bir
 // kisisel veri (ad, TC kimlik no vb.) toplanmadan once bu onayin alinmasi gerekir.
@@ -275,13 +322,8 @@ async function kvkkSonrasiDevamEt(from, session) {
     const devredildi = await startProductFlow(from, session, key, { skipIntro: true });
     if (!devredildi) await askCurrentQuestion(from, session);
   } else if (session.name) {
-    session.state = "ASK_PRODUCT";
-    await sendList(
-      from,
-      `Hangi sigorta ürünü için teklif almak istersiniz?`,
-      "Ürün Seç",
-      PRODUCT_LABELS
-    );
+    session.state = "ASK_INTENT";
+    await sendChoiceQuestion(from, INTENT_SORUSU, INTENT_SECENEKLERI);
   } else {
     session.state = "ASK_NAME";
     await sendText(from, "Teşekkürler! 😊 Size hitap edebilmek adına isminizi ve soyisminizi öğrenebilir miyim?");
@@ -629,7 +671,8 @@ const ID_KISA_ETIKET = {
   cep_telefonu: "Cep Telefonu",
   sigorta_ettiren_kendisi_mi: "Sigorta Ettiren Kendisi mi",
   sigorta_ettiren_ad_soyad: "Sigorta Ettiren",
-  sigorta_ettiren_dogum_tarihi: "Sigorta Ettiren Doğum Tarihi"
+  sigorta_ettiren_dogum_tarihi: "Sigorta Ettiren Doğum Tarihi",
+  dogum_sigortasi_eklensin: "Doğum Sigortası Eklensin mi"
 };
 
 // Danismana WhatsApp sablonu icinde (tek bir degiskene sigacak sekilde) gonderilecek
@@ -1185,13 +1228,34 @@ async function handleIncoming(from, message) {
       // sonra tekrar yazdiginda (oturum tamamen sifirlanmis olsa bile) ismiyle
       // karsilanir ve isim tekrar sorulmaz.
       musteriProfilStore.profilGuncelle(from, { adSoyad: session.name });
-      session.state = "ASK_PRODUCT";
-      await sendList(
-        from,
-        `Teşekkürler ${session.name}! Hangi sigorta ürünü için teklif almak istersiniz?`,
-        "Ürün Seç",
-        PRODUCT_LABELS
-      );
+      session.state = "ASK_INTENT";
+      await sendChoiceQuestion(from, `Teşekkürler ${session.name}! ${INTENT_SORUSU}`, INTENT_SECENEKLERI);
+      break;
+    }
+
+    case "ASK_INTENT": {
+      const matchedIntent = matchOption(userText, INTENT_SECENEKLERI);
+      if (!matchedIntent) {
+        await sendChoiceQuestion(from, INTENT_SORUSU, INTENT_SECENEKLERI);
+        break;
+      }
+      if (matchedIntent === "Bilgi Almak İstiyorum") {
+        session.state = "ASK_INFO_PRODUCT";
+        await sendList(
+          from,
+          "Hangi ürünle ilgili bilgi almak istersiniz?",
+          "Ürün Seç",
+          INFO_PRODUCT_LABELS
+        );
+      } else {
+        session.state = "ASK_PRODUCT";
+        await sendList(
+          from,
+          `Hangi sigorta ürünü için teklif almak istersiniz?`,
+          "Ürün Seç",
+          PRODUCT_LABELS
+        );
+      }
       break;
     }
 
@@ -1213,6 +1277,64 @@ async function handleIncoming(from, message) {
       const idx = PRODUCT_LABELS.indexOf(matchedLabel);
       const devredildi = await startProductFlow(from, session, PRODUCT_KEYS[idx]);
       if (!devredildi) await askCurrentQuestion(from, session);
+      break;
+    }
+
+    case "ASK_INFO_PRODUCT": {
+      const matchedInfoLabel = matchOption(userText, INFO_PRODUCT_LABELS);
+      if (!matchedInfoLabel) {
+        await sendList(
+          from,
+          "Üzgünüm, listeden bir seçenek seçmeniz gerekiyor. Lütfen tekrar seçin:",
+          "Ürün Seç",
+          INFO_PRODUCT_LABELS
+        );
+        break;
+      }
+      const infoIdx = INFO_PRODUCT_LABELS.indexOf(matchedInfoLabel);
+      const infoKey = INFO_PRODUCT_KEYS[infoIdx];
+
+      if (BILGI_SORU_MODULLERI[infoKey]) {
+        session.state = "URUN_BILGI_SORU";
+        // Hangi urunun (dolayisiyla hangi PDF'e dayanan modulun) secildigini
+        // sakliyoruz - TSS ve ÖSS artik AYRI belgelere dayandigi icin, soru
+        // geldiginde dogru modulu cagirabilmemiz gerekiyor (bkz. asagida
+        // "URUN_BILGI_SORU" case'i).
+        session.bilgiUrunAnahtari = infoKey;
+        await sendText(
+          from,
+          `${INFO_LABEL_BY_KEY[infoKey]} ile ilgili merak ettiğiniz her şeyi sorabilirsiniz - ` +
+            "örneğin bir hastalığın/tedavinin poliçe kapsamında olup olmadığı, bekleme süreleri, " +
+            "istisnalar vb. 😊\n\nSorunuzu yazabilirsiniz."
+        );
+      } else {
+        await sendText(
+          from,
+          `${INFO_LABEL_BY_KEY[infoKey]} için şu an otomatik bilgi hizmetimiz bulunmuyor. ` +
+            "Bu konuyla ilgili danışmanınızla görüşmenizi öneririz 🙏"
+        );
+        await sendList(
+          from,
+          "Başka bir ürünle ilgili bilgi almak ister misiniz? Yoksa ana menüye dönmek için \"ana menü\" yazabilirsiniz.",
+          "Ürün Seç",
+          INFO_PRODUCT_LABELS
+        );
+      }
+      break;
+    }
+
+    case "URUN_BILGI_SORU": {
+      // session.bilgiUrunAnahtari, ASK_INFO_PRODUCT'ta hangi urun secildigini
+      // (dolayisiyla hangi PDF'e dayanan modulun kullanilacagini) tutuyor.
+      // Beklenmedik sekilde bos gelirse (orn. eski bir oturumdan kalma), TSS'e
+      // dusuyoruz - ama normal akiste bu alan her zaman dolu olmali.
+      const modul = BILGI_SORU_MODULLERI[session.bilgiUrunAnahtari] || tssOzelSartSSS;
+      const cevap = await modul.soruyaCevapVer(userText);
+      await sendText(from, cevap);
+      await sendText(
+        from,
+        "Başka bir sorunuz var mı? Yoksa ana menüye dönmek için \"ana menü\" yazabilirsiniz. 😊"
+      );
       break;
     }
 

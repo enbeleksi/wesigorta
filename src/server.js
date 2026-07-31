@@ -629,6 +629,15 @@ app.get("/api/panel/conversations/:phone", panelAuth, (req, res) => {
   });
 });
 
+// 30.07.2026 eklendi: panelden bir sohbeti (mesaj gecmisini) silme ozelligi -
+// dokumanlardaki DELETE /api/panel/dokumanlar/:urunKey ile ayni desen.
+// Sadece messageLog'daki (ve DB'ye periyodik yedeklenen) mesaj gecmisini
+// siler - musterinin oturumu/kalici profili ETKILENMEZ (bkz. messageLog.js).
+app.delete("/api/panel/conversations/:phone", panelAuth, (req, res) => {
+  messageLog.deleteConversation(req.params.phone);
+  res.sendStatus(204);
+});
+
 app.post("/api/panel/send", panelAuth, async (req, res) => {
   const { to, message } = req.body;
   if (!to || !message) return res.status(400).json({ error: "to ve message gerekli" });

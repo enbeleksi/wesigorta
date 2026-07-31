@@ -48,6 +48,15 @@ function getMessages(phone) {
   return ensure(phone).messages;
 }
 
+// Panelden bir sohbeti tamamen silmek icin (30.07.2026 eklendi) - sadece
+// bellekteki mesaj gecmisini kaldirir, musterinin oturumunu (sessionStore)
+// veya kalici profilini (musteriProfilStore) ETKILEMEZ; musteri tekrar yazarsa
+// bot onu normal sekilde (kaldigi yerden/tanidigi musteri olarak) karsilamaya
+// devam eder - sadece paneldeki eski mesaj gecmisi/onizleme temizlenmis olur.
+function deleteConversation(phone) {
+  conversations.delete(phone);
+}
+
 // Sunucu baslarken bir kez cagrilir - DB'de kayitli mesaj gecmisi varsa belleğe yukler.
 async function yukle() {
   const veri = await db.oku("messages");
@@ -63,4 +72,4 @@ async function kaydet() {
   await db.yaz("messages", obj);
 }
 
-module.exports = { logMessage, setName, listConversations, getMessages, yukle, kaydet };
+module.exports = { logMessage, setName, listConversations, getMessages, deleteConversation, yukle, kaydet };

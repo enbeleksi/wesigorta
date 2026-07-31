@@ -14,12 +14,14 @@
   #appBody { flex: 1; display: flex; overflow: hidden; }
   #sidebar { width: 320px; border-right: 1px solid #ddd; overflow-y: auto; background: #fff; }
   #sidebar h2 { font-size: 16px; padding: 16px; margin: 0; border-bottom: 1px solid #eee; }
-  .convo { padding: 12px 16px; border-bottom: 1px solid #f0f0f0; cursor: pointer; }
+  .convo { padding: 12px 16px; border-bottom: 1px solid #f0f0f0; cursor: pointer; position: relative; }
   .convo:hover { background: #f5f5f5; }
   .convo.active { background: #E3EBF5; }
-  .convo .name { font-weight: 600; font-size: 14px; }
+  .convo .name { font-weight: 600; font-size: 14px; padding-right: 22px; }
   .convo .phone { font-size: 12px; color: #888; }
   .convo .preview { font-size: 13px; color: #555; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+  .convo .convoSilBtn { position: absolute; top: 10px; right: 8px; background: none; border: none; color: #aaa; cursor: pointer; font-size: 15px; padding: 2px 6px; border-radius: 4px; line-height: 1; }
+  .convo .convoSilBtn:hover { background: #f6d9d9; color: #7A1F35; }
   #main { flex: 1; display: flex; flex-direction: column; }
   #chatHeader { padding: 16px; border-bottom: 1px solid #ddd; background: #fff; display: flex; justify-content: space-between; align-items: center; }
   #chatHeader h3 { margin: 0; font-size: 15px; }
@@ -148,10 +150,24 @@ async function renderSidebar() {
     div.className = 'convo' + (c.phone === activePhone ? ' active' : '');
     div.onclick = () => selectConversation(c.phone);
     div.innerHTML = `
+      <button class="convoSilBtn" title="Bu sohbeti sil">🗑️</button>
       <div class="name">${c.name || c.phone}</div>
       <div class="phone">${c.phone}</div>
       <div class="preview">${c.lastDirection === 'out' ? 'Siz: ' : ''}${escapeHtml(c.lastMessage || '')}</div>
     `;
+    // Silme butonu tikladiginda hem satirin kendi onclick'i (sohbeti acma)
+    // TETIKLENMESIN diye stopPropagation kullaniyoruz.
+    div.querySelector('.convoSilBtn').onclick = async (e) => {
+      e.stopPropagation();
+      const baslik = c.name || c.phone;
+      if (!confirm(`${baslik} ile olan sohbet gecmisini silmek istediginizden emin misiniz? Bu islem geri alinamaz.`)) return;
+      await fetch('/api/panel/conversations/' + encodeURIComponent(c.phone), { method: 'DELETE' });
+      if (activePhone === c.phone) {
+        activePhone = null;
+        document.getElementById('main').innerHTML = '<div id="empty">Soldan bir konusma secin</div>';
+      }
+      renderSidebar();
+    };
     list.appendChild(div);
   });
 }
