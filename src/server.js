@@ -446,6 +446,15 @@ app.get("/api/panel/guvenlik-kodu-sablonu-olustur", panelAuth, async (req, res) 
 // ile gonderilmeye devam eder (bkz. conversationEngine.js'teki gunlukOzetGonder),
 // yani gecis sirasinda hicbir gun mesaj kaybolmaz. Kullanildiktan sonra bu
 // route silinebilir.
+//
+// NOT (31.07.2026, ilk deneme): HEADER'da emoji ("☀️ Günlük Özet") kullanilinca
+// Meta ISTEGI OLUSTURMADAN ANINDA reddetti (OAuthException, error_subcode
+// 2388072, "Üst Bilgi Formatı Yanlış" - "Mesaj başlığında yeni satırlar,
+// biçimlendirme karakterleri, ifade simgeleri veya yıldız işaretleri
+// bulunamaz."). Yani WhatsApp sablon HEADER'i (BODY'nin aksine) emoji/yeni
+// satir/markdown KABUL ETMIYOR - sadece duz metin. Bu yuzden HEADER'dan emoji
+// cikarildi, sadece "Günlük Özet" birakildi (emoji'ler zaten BODY icindeki
+// {{detay}} parametresinin - yani gunaydin mesajinin - icinde bolca var).
 app.get("/api/panel/gunluk-ozet-sablonu-olustur", panelAuth, async (req, res) => {
   try {
     const sonuc = await sablonOlustur({
@@ -453,7 +462,7 @@ app.get("/api/panel/gunluk-ozet-sablonu-olustur", panelAuth, async (req, res) =>
       language: "tr",
       category: "UTILITY",
       components: [
-        { type: "HEADER", format: "TEXT", text: "☀️ Günlük Özet" },
+        { type: "HEADER", format: "TEXT", text: "Günlük Özet" },
         {
           type: "BODY",
           text: "{{detay}}",

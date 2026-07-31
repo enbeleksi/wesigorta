@@ -48,7 +48,7 @@ const { ruhsatFotografiAnalizEt } = require("./ruhsatAnaliz");
 const { proformaAnalizEt } = require("./proformaAnaliz");
 const { vefatTeminatiHesapla } = require("./vefatTeminatiHesapla");
 const { satisSozlesmesiAnalizEt } = require("./satisSozlesmesiAnaliz");
-const { BES_FONLARI, fonlariKategoriyeGoreGrupla } = require("./besFonVerileri");
+const { BES_FONLARI, besFonMesajlariniOlustur } = require("./besFonVerileri");
 const { fonGetirileriniGetir } = require("./tefasGetiriAnaliz");
 
 // Elinde "Trafik Sigortası" ya da "Kasko Sigortası" gecen urun etiketleri
@@ -1033,23 +1033,46 @@ function turkiyeSaatiniFormatla(ms, secenekler) {
 }
 
 // --- Karsilama (ana giris noktasi) ---
+// 31.07.2026'da kullanicinin talebiyle yeniden duzenlendi:
+// - "BES Fonları" kaldirildi - artik "Sık Sorulan Sorular" > "Bireysel
+//   Emeklilik(BES)" secenegi ile ayni bilgiye ulasiliyor (bkz.
+//   DANISMAN_SSS_URUN_SEC case'i) - boylece musteriler de bu bilgiye
+//   kendi Sık Sorulan Sorular akislarindan erisebiliyor.
+// - "Doküman Merkezi" tamamen kaldirildi.
+// - "Yaklaşan Yenilemeler" kaldirildi - zaten "Bekleyen İş" listesinde
+//   yaklasan yenilemelere de yer veriliyor, ayri bir secenek gereksiz.
+// - Yeni bir danisman-ozel hizmet olarak "Randevu Defterim" eklendi -
+//   icerigi henuz detaylandirilmadi (kullaniciyla birlikte
+//   netlestirilecek), simdilik "yakinda" placeholder'i gosteriyor (bkz.
+//   DANISMAN_RANDEVU_DEFTERIM case'i).
+// - Sira, kullanicinin belirttigi son haliyle: Bekleyen İş, BES Hayat
+//   Başvurusu, Elementer Teklif Al, Yenileme Takibi Ekle, Randevu Defterim,
+//   Destek Talebi Oluştur, Performansım, Sık Sorulan Sorular.
 const ANA_MENU_SECENEKLERI = [
-  "Elementer Teklif Al",
-  "BES Hayat Başvurusu",
   "Bekleyen İş",
-  "Destek Talebi Oluştur",
-  "Yaklaşan Yenilemeler",
+  "BES Hayat Başvurusu",
+  "Elementer Teklif Al",
   "Yenileme Takibi Ekle",
-  "BES Fonları",
-  "Doküman Merkezi",
-  "Sık Sorulan Sorular",
-  "Performansım"
+  "Randevu Defterim",
+  "Destek Talebi Oluştur",
+  "Performansım",
+  "Sık Sorulan Sorular"
 ];
 
 // Ana menude hicbir secenekle eslesmeyen, ama "hayır", "yok", "teşekkürler"
 // gibi bir kapanis/red ifadesi iceren kisa cevaplari yakalar (orn. "hayır yok
 // teşekkürler", "yok teşekkürler", "hayır teşekkürler", "teşekkürler").
 const KARSILAMA_KAPANIS_REGEX = /\b(hay[ıi]r|yok|te[şs]ekk[üu]r)/i;
+
+// 31.07.2026 eklendi: "Sık Sorulan Sorular" (DANISMAN_SSS_SORU) serbest
+// soru-cevap modunda, danismanin yazdigi metnin SADECE bir kapanis/tesekkur
+// ifadesi olup olmadigini anlamak icin (bkz. DANISMAN_SSS_SORU case'i).
+// normalizeTr uygulanmis metne karsi test edilir (ş->s, ü->u vb.) - bu yuzden
+// Turkce karakter icermez. Baslangicta (istege bagli) "cok", sonunda
+// (istege bagli) noktalama/emoji tolere eder, ama "teşekkürler ama..." gibi
+// tesekkurun ARDINDAN baska bir seyin geldigi durumlari (gercek bir soru
+// icerebilecekleri icin) kasten YAKALAMAZ - $ ile ceviri sonunu sabitliyoruz.
+const KAPANIS_IFADE_REGEX = /^(cok\s+)?(tesekkur(ler)?(\s+ederim)?|sagol|saol|elinize\s+saglik)[\s!.,😊🙏👍🎉]*$/;
 
 async function karsilamaGoster(from, session) {
   const danisman = danismaniBul(from);
@@ -2415,90 +2438,36 @@ async function sssUrunSecBaslat(from, session) {
 // araciligiyla Claude'un web aramasi ozelligini kullanarak calisiyordu)
 // KULLANICI TALEBIYLE TAMAMEN KALDIRILDI - guvenilir calismadigi icin
 // (web_search'e bagli iki API cagrisi zaman zaman basarisiz oluyordu).
-// ekonomiRaporuAnaliz.js dosyasi da bu yuzden silindi. "BES Fonları" artik
-// SADECE fon listesini (asagidaki besFonListesiGoster) gosterir - bu
-// fonksiyon hala tefasGetiriAnaliz.js araciligiyla web aramasiyla GUNCEL
+// ekonomiRaporuAnaliz.js dosyasi da bu yuzden silindi. "BES Fonları" TEK
+// BASINA bir ana menu secenegi olmaktan cikip, 31.07.2026'da kullanicinin
+// talebiyle "Sık Sorulan Sorular" akisindaki "Bireysel Emeklilik(BES)"
+// secenegine tasindi (bkz. asagida DANISMAN_SSS_URUN_SEC case'i) - boylece
+// MUSTERILER de (kendi Sık Sorulan Sorular akislarindan) fon bilgisine
+// erisebiliyor (bkz. conversationEngine.js'teki ayni tasima). Fon
+// bloklarinin WhatsApp karakter sinirina gore mesajlara bolunmesi (eskiden
+// burada tanimliydi) artik besFonVerileri.js'teki PAYLAŞILAN
+// besFonMesajlariniOlustur fonksiyonunda - boylece musteri ve danisman
+// tarafi AYNI mantigi kullanir.
+//
+// Bu fonksiyon hala tefasGetiriAnaliz.js araciligiyla web aramasiyla GUNCEL
 // GETIRI verisi cekmeye calisir, ama bu "best-effort" bir ek oldugu icin
 // basarisiz olsa bile fon listesi YINE DE (getirisiz) gosterilmeye devam
 // eder - o yuzden ayni guvenilirlik sorunu burada kullaniciyi
 // engellemiyor/hata mesajiyla karsilastirmiyor.
-//
-// WhatsApp metin mesajlarinin gercek karakter siniri ~4096 - bir kategoride
-// (orn. "Yüksek Riskli" 11 fon) tum fon bloklari tek mesaja sigmayabilir.
-// Bu yuzden her kategori, bu sinirin altinda kalacak sekilde birden fazla
-// mesaja bolunebilir (guvenlik payi birakmak icin sinirdan daha dusuk bir
-// esik kullaniyoruz).
-const WHATSAPP_MESAJ_KARAKTER_ESIGI = 3500;
-
-function bloklariMesajGruplarinaBol(baslikUzunlugu, bloklar) {
-  const gruplar = [];
-  let mevcutGrup = [];
-  let mevcutUzunluk = baslikUzunlugu;
-  for (const blok of bloklar) {
-    const ekUzunluk = blok.length + 2; // aralarina "\n\n" ekleniyor
-    if (mevcutGrup.length > 0 && mevcutUzunluk + ekUzunluk > WHATSAPP_MESAJ_KARAKTER_ESIGI) {
-      gruplar.push(mevcutGrup);
-      mevcutGrup = [];
-      mevcutUzunluk = baslikUzunlugu;
-    }
-    mevcutGrup.push(blok);
-    mevcutUzunluk += ekUzunluk;
-  }
-  if (mevcutGrup.length > 0) gruplar.push(mevcutGrup);
-  return gruplar;
-}
-
-// "Fon Listesini Gör" secildiginde TUM fonlari (21'i de) risk kategorisine
-// gore gruplanmis sekilde, kisa bilgileriyle birlikte gosterir - artik ayrica
-// bir kategori sec(im)i istemez. Ayrica tefasGetiriAnaliz.js araciligiyla
-// once Garanti BBVA Emeklilik'in kendi resmi fon getirileri sayfasindan,
-// bulunamazsa www.tefas.gov.tr'den (ve ilgili kaynaklardan) GUNCEL getiri
-// yuzdelerini arastirmayi dener; bu "best-effort" bir ek oldugu icin BASARISIZ olsa
-// bile (API hatasi, anahtar tanimsiz, hicbir fon icin veri bulunamamasi
-// vb.) fon listesi YINE DE getirisiz olarak gosterilmeye devam eder - bir
-// veri kaynagi sorunu, temel fon bilgisi gosterimini ASLA engellemez.
-// WhatsApp mesaj uzunlugu sinirlarina takilmamak icin liste, TEK BIR dev
-// mesaj yerine HER RISK KATEGORISI icin (gerekirse kategori icinde de
-// birden fazla parcaya bolunerek) AYRI mesajlar olarak gonderilir.
 async function besFonListesiGoster(from, session) {
   await sendText(from, "Fon listesini ve güncel getiri verilerini hazırlıyorum, bir saniye... 🔍");
 
   let getiriHaritasi = {};
-  let getiriBulundu = false;
   try {
     getiriHaritasi = await fonGetirileriniGetir(BES_FONLARI.map((f) => f.kod));
-    getiriBulundu = Object.keys(getiriHaritasi).length > 0;
   } catch (err) {
     console.error("Fon getirileri alinamadi (liste yine de getirisiz gosterilecek):", err.message);
   }
 
-  const gruplar = fonlariKategoriyeGoreGrupla().filter((g) => g.fonlar.length > 0);
-  for (const grup of gruplar) {
-    const satirlar = grup.fonlar.map((f) => {
-      const getiri = getiriHaritasi[f.kod];
-      const getiriSatiri = getiri ? `Güncel Getiri: ${getiri}\n` : "";
-      return (
-        `*${f.kod}* - ${f.ad} (Risk ${f.riskDegeri}/7)\n` +
-        `${f.aciklama}\n` +
-        `Ana Varlık Yapısı: ${f.anaVarlikYapisi}\n` +
-        `${getiriSatiri}` +
-        `Karşılaştırma Ölçütü: ${f.karsilastirmaOlcutu}`
-      );
-    });
-    const baslikMetni = `📋 ${grup.etiket}`;
-    const parcalar = bloklariMesajGruplarinaBol(baslikMetni.length + 4, satirlar);
-    for (let i = 0; i < parcalar.length; i++) {
-      const sayfaEki = parcalar.length > 1 ? ` (${i + 1}/${parcalar.length})` : "";
-      await sendText(from, `${baslikMetni}${sayfaEki}\n\n${parcalar[i].join("\n\n")}`);
-    }
+  const mesajlar = besFonMesajlariniOlustur(getiriHaritasi);
+  for (const mesaj of mesajlar) {
+    await sendText(from, mesaj);
   }
-
-  await sendText(
-    from,
-    getiriBulundu
-      ? "ℹ️ Getiri verileri isteğiniz anında web'den (Garanti BBVA Emeklilik ve TEFAS kaynakları) araştırılmıştır - yaklaşık değerlerdir. Kesin ve güncel rakamlar için garantibbvaemeklilik.com.tr/urunler/emeklilik-yatirim-fonlarimiz/bes-fon-getirileri ya da tefas.gov.tr/tr/fon-getirileri adresini kontrol ediniz."
-      : "ℹ️ Şu an güncel getiri verileri alınamadı. Kesin rakamlar için garantibbvaemeklilik.com.tr/urunler/emeklilik-yatirim-fonlarimiz/bes-fon-getirileri ya da tefas.gov.tr/tr/fon-getirileri adresini kontrol ediniz."
-  );
 
   await devamMenuGoster(from, session);
 }
@@ -3084,20 +3053,20 @@ async function handleAdvisorMessage(from, parsed) {
         await destekTalebiAciklamaGoster(from, session);
         return;
       }
-      if (userText === "Yaklaşan Yenilemeler") {
-        await yenilemelerimGoster(from, session);
-        return;
-      }
       if (userText === "Yenileme Takibi Ekle") {
         await yenilemeBaslat(from, session);
         return;
       }
-      if (userText === "BES Fonları") {
-        await besFonListesiGoster(from, session);
-        return;
-      }
-      if (userText === "Doküman Merkezi") {
-        await formUrunSec(from, session);
+      // 31.07.2026 eklendi: icerigi henuz kullaniciyla birlikte
+      // detaylandirilmadigi icin simdilik bir "yakinda" placeholder'i
+      // gosterip ana menuye donuyor - gercek islevi netlestikce buraya
+      // eklenecek.
+      if (userText === "Randevu Defterim") {
+        await sendText(
+          from,
+          "📅 Randevu Defterim özelliği yakında burada olacak! İçeriğini birlikte netleştireceğiz 🙂"
+        );
+        await devamMenuGoster(from, session);
         return;
       }
       if (userText === "Sık Sorulan Sorular") {
@@ -3726,6 +3695,16 @@ async function handleAdvisorMessage(from, parsed) {
       const infoIdx = conversationEngine.INFO_PRODUCT_LABELS.indexOf(matchedInfoLabel);
       const infoKey = conversationEngine.INFO_PRODUCT_KEYS[infoIdx];
 
+      // 31.07.2026 eklendi: "Bireysel Emeklilik(BES)" secildiginde, TSS/ÖSS/
+      // Doğum'un aksine serbest soru-cevap moduna GIRILMIYOR (BES icin PDF'e
+      // dayanan boyle bir motor yok) - onun yerine eskiden ayri bir ana menu
+      // secenegi olan "BES Fonları" icerigi (fon listesi + guncel getiriler)
+      // dogrudan gosteriliyor, sonra ana menuye donuluyor.
+      if (infoKey === "bes") {
+        await besFonListesiGoster(from, session);
+        return;
+      }
+
       if (conversationEngine.BILGI_SORU_MODULLERI[infoKey]) {
         session.state = "DANISMAN_SSS_SORU";
         session.danismanSssUrunAnahtari = infoKey;
@@ -3748,6 +3727,18 @@ async function handleAdvisorMessage(from, parsed) {
     // --- Sık Sorulan Sorular: PDF'e dayanan serbest soru-cevap (musteri
     // tarafindaki URUN_BILGI_SORU ile AYNI moduller/mantik) ---
     case "DANISMAN_SSS_SORU": {
+      // 31.07.2026 eklendi: danisman sadece "teşekkürler" gibi bir kapanis
+      // ifadesi yazdiginda, bu metin YANLISLIKLA soru-cevap moduluna (AI)
+      // gonderilip AI'nin kendi kibar cevabinin ARDINDAN asagidaki sabit
+      // "Başka bir sorunuz var mı?" mesaji da gidiyordu - ust uste iki mesaj
+      // (musteri tarafindaki AYNI hatanin danisman tarafindaki karsiligi,
+      // bkz. conversationEngine.js'teki URUN_BILGI_SORU case'indeki AYNI
+      // duzeltme). Artik boyle bir kapanis ifadesi TEK BASINA gelirse AI'a
+      // hic sorulmuyor, TEK bir kisa tesekkur cevabi gonderiliyor.
+      if (KAPANIS_IFADE_REGEX.test(normalizeTr(userText.trim()))) {
+        await sendText(from, "Rica ederim, her zaman yardımcı olmaktan memnuniyet duyarız! 😊 Başka bir sorunuz olursa buradayım.");
+        return;
+      }
       const modul =
         conversationEngine.BILGI_SORU_MODULLERI[session.danismanSssUrunAnahtari] ||
         conversationEngine.BILGI_SORU_MODULLERI.tss;

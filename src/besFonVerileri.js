@@ -218,4 +218,80 @@ function fonlariKategoriyeGoreGrupla() {
   }));
 }
 
-module.exports = { BES_FONLARI, RISK_KATEGORILERI, riskKategorisiBul, fonlariKategoriyeGoreGrupla };
+// 31.07.2026 eklendi: WhatsApp'in gercek karakter siniri ~4096 - bir
+// kategoride (orn. "Yüksek Riskli" 11 fon) tum fon bloklari tek mesaja
+// sigmayabilir. Bu yuzden her kategori, bu sinirin altinda kalacak sekilde
+// birden fazla mesaja bolunebilir (guvenlik payi birakmak icin sinirdan daha
+// dusuk bir esik kullaniliyor). Eskiden bu fonksiyon SADECE advisorEngine.js
+// icinde (besFonListesiGoster) tanimliydi; kullanicinin "BES Fonları" ozelligini
+// danisman ana menusunden kaldirip musteri/danisman ORTAK "Sık Sorulan
+// Sorular" akisindaki "Bireysel Emeklilik(BES)" secenegine tasima talebi
+// uzerine BURAYA (besFonVerileri.js - hem conversationEngine.js hem
+// advisorEngine.js'in dongusel bagimlilik olmadan erisebildigi "yaprak" bir
+// modul) tasindi - boylece iki taraf da AYNI mantigi kullanir.
+const WHATSAPP_MESAJ_KARAKTER_ESIGI = 3500;
+
+function bloklariMesajGruplarinaBol(baslikUzunlugu, bloklar) {
+  const gruplar = [];
+  let mevcutGrup = [];
+  let mevcutUzunluk = baslikUzunlugu;
+  for (const blok of bloklar) {
+    const ekUzunluk = blok.length + 2; // iki bos satirla birlestirilecek
+    if (mevcutGrup.length > 0 && mevcutUzunluk + ekUzunluk > WHATSAPP_MESAJ_KARAKTER_ESIGI) {
+      gruplar.push(mevcutGrup);
+      mevcutGrup = [];
+      mevcutUzunluk = baslikUzunlugu;
+    }
+    mevcutGrup.push(blok);
+    mevcutUzunluk += ekUzunluk;
+  }
+  if (mevcutGrup.length > 0) gruplar.push(mevcutGrup);
+  return gruplar;
+}
+
+// getiriHaritasi: { [fonKodu]: "guncel getiri metni" } (bkz. tefasGetiriAnaliz.js
+// - fonGetirileriniGetir basarisiz olursa/tanimsizsa bos {} gecilebilir, bu
+// fonksiyon getirisiz de calisir). Donus degeri: her biri sendText ile ayri
+// ayri gonderilmesi gereken, HAZIR (WhatsApp karakter sinirina gore onceden
+// bolunmus) mesaj metinlerinden olusan bir DIZI - bu fonksiyon HICBIR SEY
+// GONDERMEZ, sadece metinleri hazirlar (gonderim, cagiran tarafin KENDI
+// sendText'i ile yapilir - boylece bu modul WhatsApp gonderim katmanina
+// bagimli olmaz).
+function besFonMesajlariniOlustur(getiriHaritasi) {
+  const mesajlar = [];
+  const getiriBulundu = Object.keys(getiriHaritasi || {}).length > 0;
+  const gruplar = fonlariKategoriyeGoreGrupla().filter((g) => g.fonlar.length > 0);
+  for (const grup of gruplar) {
+    const satirlar = grup.fonlar.map((f) => {
+      const getiri = getiriHaritasi && getiriHaritasi[f.kod];
+      const getiriSatiri = getiri ? `Güncel Getiri: ${getiri}\n` : "";
+      return (
+        `*${f.kod}* - ${f.ad} (Risk ${f.riskDegeri}/7)\n` +
+        `${f.aciklama}\n` +
+        `Ana Varlık Yapısı: ${f.anaVarlikYapisi}\n` +
+        `${getiriSatiri}` +
+        `Karşılaştırma Ölçütü: ${f.karsilastirmaOlcutu}`
+      );
+    });
+    const baslikMetni = `📋 ${grup.etiket}`;
+    const parcalar = bloklariMesajGruplarinaBol(baslikMetni.length + 4, satirlar);
+    for (let i = 0; i < parcalar.length; i++) {
+      const sayfaEki = parcalar.length > 1 ? ` (${i + 1}/${parcalar.length})` : "";
+      mesajlar.push(`${baslikMetni}${sayfaEki}\n\n${parcalar[i].join("\n\n")}`);
+    }
+  }
+  mesajlar.push(
+    getiriBulundu
+      ? "ℹ️ Getiri verileri isteğiniz anında web'den (Garanti BBVA Emeklilik ve TEFAS kaynakları) araştırılmıştır - yaklaşık değerlerdir. Kesin ve güncel rakamlar için garantibbvaemeklilik.com.tr/urunler/emeklilik-yatirim-fonlarimiz/bes-fon-getirileri ya da tefas.gov.tr/tr/fon-getirileri adresini kontrol ediniz."
+      : "ℹ️ Şu an güncel getiri verileri alınamadı. Kesin rakamlar için garantibbvaemeklilik.com.tr/urunler/emeklilik-yatirim-fonlarimiz/bes-fon-getirileri ya da tefas.gov.tr/tr/fon-getirileri adresini kontrol ediniz."
+  );
+  return mesajlar;
+}
+
+module.exports = {
+  BES_FONLARI,
+  RISK_KATEGORILERI,
+  riskKategorisiBul,
+  fonlariKategoriyeGoreGrupla,
+  besFonMesajlariniOlustur
+};

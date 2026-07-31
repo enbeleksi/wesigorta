@@ -209,6 +209,8 @@ Sağlık Sigortası Genel Şartları'nda belirtilen teminat dışı hallerle bir
 5.40. Anlaşmasız Kurumlarda gerçekleşen, "Sağlık Uygulama Tebliği, Genel Sağlık Sigortası'nda 'İlave Ücret Alınmayacak Sağlık Hizmetleri'" maddesinde belirtilen sağlık hizmetleri
 5.41. Doktor muayenesi ile ilişkisi olmadan gerçekleşen rutin kontrol, teşhis yöntemleri ve tetkikler
 5.42. AKSİGORTA A.Ş.'ye ait www.aksigorta.com.tr adresli web sayfasında ''Online İşlemler'' adımı altında bulunan 'Teminat Dışı Kalan Kurumlar Listesi''nde yer alan kurumlara ve doktorlara ait her türlü gider
+5.43. Poliçe geçerlilik süresinde trafik kazası sonrasında oluşmadığı sürece diş, diş eti ile ilgili tüm giderler, çene eklemi, ağız çene cerrahisi, çene kemiği ile ilgili yapılan tüm muayene, ilaç giderleri ve tüm işlemler teminat dışındadır. Trafik kazası sonucu meydana gelen diş rahatsızlıklarına ait tedavi giderlerinin ödenebilmesi için, trafik kazası tespit tutanağı, dişlerin hasar gördüğüne dair doktor raporu ve olay tarihinde çekilmiş diş grafilerinin fatura ile birlikte gönderilmesi gerekmektedir.
+5.44. Sigorta Sözleşmesi'nin geçerlilik süresinde meydana gelen bir kaza veya hastalık nedeniyle ortaya çıkan bir kusurun düzeltilmesine yönelik olanların dışındaki tüm estetik ve plastik cerrahi işlemleri ile trafik kazası dışında diş ve burun ile ilgili estetik ve plastik cerrahi işlemleri teminat dışıdır (trafik kazasının trafik zaptı ile belgelendirilmesi zorunludur).
 Sigortacı, uygulamaya yeni alınan, uygulamadan kaldırılan veya değiştirilen tıbbi uygulamaların değişim ve gelişmelerini göz önünde bulundurarak, işbu "Teminat Dışı Kalan Haller"de düzenlemeler yapabilir. Bu durumda yapılabilecek olan değişiklikler, poliçede bulunan, Ömür Boyu Yenileme Garantisi (ÖBYG) hakkı bulunan sigortalılar dahil olmak üzere her bir sigortalı için yeni poliçe başlangıç tarihinden itibaren geçerli olur.
 
 6. COĞRAFİ KAPSAM
@@ -265,7 +267,8 @@ KURALLAR:
 - Emin olmadığın, belgede açıkça yazmayan bir şeyi asla kendi yorumunla tamamlama - böyle bir durumda YANIT_YOK yaz.
 - Türkçe cevap ver.
 - Teknik terimleri (muafiyet, teminat, bekleme süresi vb.) gerektiğinde kısaca açıkla.
-- Senin (ve bu botun) müşterinin kendi poliçesine/hesabına özel bilgilerine (örn. sigortalılık süresi, ÖBYG hakkı, poliçe durumu, ödemeler) erişimin YOK - bunları "kontrol edelim mi", "bakalım mı", "inceleyelim mi" gibi bir teklif ASLA sunma, bunu yapabilecekmiş gibi davranma. Soru müşterinin kendi hesabına/poliçesine özelse (genel poliçe şartları değil, "benim ÖBYG hakkım ne kadar" gibi kişiye özel bir durum sorusuysa), bunu belgeden cevaplayamayacağını belirtip doğrudan danışmanıyla görüşmesini öner (YANIT_YOK yazarak fallback mesajının devreye girmesini sağlayabilirsin).`;
+- Senin (ve bu botun) müşterinin kendi poliçesine/hesabına özel bilgilerine (örn. sigortalılık süresi, ÖBYG hakkı, poliçe durumu, ödemeler) erişimin YOK - bunları "kontrol edelim mi", "bakalım mı", "inceleyelim mi" gibi bir teklif ASLA sunma, bunu yapabilecekmiş gibi davranma. Soru müşterinin kendi hesabına/poliçesine özelse (genel poliçe şartları değil, "benim ÖBYG hakkım ne kadar" gibi kişiye özel bir durum sorusuysa), bunu belgeden cevaplayamayacağını belirtip doğrudan danışmanıyla görüşmesini öner (YANIT_YOK yazarak fallback mesajının devreye girmesini sağlayabilirsin).
+- Müşteriye HER ZAMAN resmi/"siz"li dille hitap et (örn. "kapsamınızdadır", "belirtir misiniz") - asla "sen"li/samimi dile geçme, müşteri sana samimi yazsa bile.`;
 
 // Musterinin sorusunu, belgeye dayanarak cevaplar. Belgede cevap yoksa ya da
 // API kullanilamiyorsa (ANTHROPIC_API_KEY tanimli degil, API hata donuyor vb.)

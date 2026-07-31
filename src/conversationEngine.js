@@ -10,6 +10,14 @@ const sozlukSSS = require("./sozlukSSS");
 const tssOzelSartSSS = require("./tssOzelSartSSS");
 const ozelSaglikOzelSartSSS = require("./ozelSaglikOzelSartSSS");
 const dogumSigortasiOzelSartSSS = require("./dogumSigortasiOzelSartSSS");
+// 31.07.2026 eklendi: "Sık Sorulan Sorular" akisinda "Bireysel Emeklilik(BES)"
+// secildiginde (bkz. ASK_INFO_PRODUCT case'i), TSS/ÖSS/Doğum'un aksine serbest
+// soru-cevap moduna GIRILMIYOR - onun yerine BES fon listesi (+ best-effort
+// guncel getiriler) dogrudan gosteriliyor. besFonVerileri.js/tefasGetiriAnaliz.js
+// "yaprak" moduller oldugu icin (advisorEngine.js'e ya da bu dosyaya bagimli
+// degiller) burada dogrudan require edilebiliyor - dongusel bagimlilik riski yok.
+const { BES_FONLARI, besFonMesajlariniOlustur } = require("./besFonVerileri");
+const { fonGetirileriniGetir } = require("./tefasGetiriAnaliz");
 const flows = require("./flows");
 const { baskasiIcinMi, sehirAdiBul } = flows;
 const { adSoyadGecerliMi, tcKimlikGecerliMi, tarihGecerliMi, telefonGecerliMi } = require("./validators");
@@ -171,6 +179,16 @@ function matchOption(userText, options) {
   );
 }
 
+// 31.07.2026 eklendi: "Sık Sorulan Sorular" (URUN_BILGI_SORU) serbest
+// soru-cevap modunda, musterinin yazdigi metnin SADECE bir kapanis/tesekkur
+// ifadesi olup olmadigini anlamak icin (bkz. URUN_BILGI_SORU case'i).
+// normalizeTr uygulanmis metne karsi test edilir (ş->s, ü->u vb.) - bu yuzden
+// Turkce karakter icermez. Baslangicta (istege bagli) "cok", sonunda
+// (istege bagli) noktalama/emoji tolere eder, ama "teşekkürler ama..." gibi
+// tesekkurun ARDINDAN baska bir seyin geldigi durumlari (gercek bir soru
+// icerebilecekleri icin) kasten YAKALAMAZ - $ ile ceviri sonunu sabitliyoruz.
+const KAPANIS_IFADE_REGEX = /^(cok\s+)?(tesekkur(ler)?(\s+ederim)?|sagol|saol|elinize\s+saglik)[\s!.,😊🙏👍🎉]*$/;
+
 // Bazi sorular onceki cevaba gore atlanabilir (question.skipIf(answers) => true/false),
 // bazilari da onceden zaten cevaplanmis olabilir (orn. isim zaten alinmissa "ad_soyad"
 // sorusu tekrar sorulmaz). Verilen index'ten baslayarak atlanmasi gereken sorular
@@ -271,7 +289,6 @@ async function baslaYeniKonusma(from, session, userText, oncekiIsim) {
   // olsa) konusmus demektir.
   const kaliciProfil = musteriProfilStore.profilGetir(from);
   const bilinenIsim = oncekiIsim || (kaliciProfil && kaliciProfil.adSoyad) || null;
-  const ilkAd = bilinenIsim ? bilinenIsim.trim().split(/\s+/)[0] : null;
 
   // Ismi zaten biliyorsak (donen musteri), session.name'i simdiden dolduruyoruz.
   // Bu sayede hem KVKK sonrasi tekrar isim sorulmaz, hem de QR akisinda urunun
@@ -283,17 +300,21 @@ async function baslaYeniKonusma(from, session, userText, oncekiIsim) {
   if (matchedKey) {
     session.pendingProduct = matchedKey;
     await sendText(from, flows[matchedKey].qrGreeting);
-  } else if (ilkAd) {
+  } else if (bilinenIsim) {
     // Musteriyi kayitli ismiyle karsiliyoruz - ama bu telefon numarasinin hala
     // GERCEKTEN ayni kisiye ait oldugundan emin degiliz (el degistirmis
     // olabilir). isimTeyitBekleniyor bayragini isaretliyoruz: handleIncoming
     // bu karsilamadan HEMEN SONRAKI ilk mesajda musteri "ben ... degilim" gibi
     // bir sey soylerse, kalici kaydi silip musteriyi yeni musteri gibi
     // ele alacak (bkz. handleIncoming basindaki kontrol).
+    // 31.07.2026 DUZELTILDI: musteriye HICBIR ZAMAN sadece ilk adiyla hitap
+    // edilmiyor (kullanicinin talebi - her zaman TAM isim-soyisim ve
+    // "siz/sizli" resmi dil kullaniliyor) - bu yuzden burada artik ilkAd
+    // yerine dogrudan bilinenIsim (tam ad-soyad) kullaniliyor.
     session.isimTeyitBekleniyor = true;
     await sendText(
       from,
-      `${gunSelamlamasi()} ${ilkAd}! 😊 Yeni bir sigorta teklif talebiniz için bizi tekrar tercih ettiğiniz için teşekkür ederiz. Size nasıl yardımcı olabiliriz?`
+      `${gunSelamlamasi()} ${bilinenIsim}! 😊 Yeni bir sigorta teklif talebiniz için bizi tekrar tercih ettiğiniz için teşekkür ederiz. Size nasıl yardımcı olabiliriz?`
     );
   } else {
     await sendText(
@@ -1306,6 +1327,33 @@ async function handleIncoming(from, message) {
       const infoIdx = INFO_PRODUCT_LABELS.indexOf(matchedInfoLabel);
       const infoKey = INFO_PRODUCT_KEYS[infoIdx];
 
+      // 31.07.2026 eklendi: "Bireysel Emeklilik(BES)" secildiginde, TSS/ÖSS/
+      // Doğum'un aksine serbest soru-cevap moduna GIRILMIYOR (BES icin PDF'e
+      // dayanan boyle bir motor yok) - onun yerine eskiden SADECE danismanlara
+      // ozel bir menu secenegi olan "BES Fonları" icerigi (fon listesi + best-
+      // effort guncel getiriler) artik musterilere de dogrudan gosteriliyor
+      // (kullanicinin talebi), sonra urun listesi tekrar sunuluyor.
+      if (infoKey === "bes") {
+        await sendText(from, "Fon listesini ve güncel getiri verilerini hazırlıyorum, bir saniye... 🔍");
+        let getiriHaritasi = {};
+        try {
+          getiriHaritasi = await fonGetirileriniGetir(BES_FONLARI.map((f) => f.kod));
+        } catch (err) {
+          console.error("Fon getirileri alinamadi (liste yine de getirisiz gosterilecek):", err.message);
+        }
+        const mesajlar = besFonMesajlariniOlustur(getiriHaritasi);
+        for (const mesaj of mesajlar) {
+          await sendText(from, mesaj);
+        }
+        await sendList(
+          from,
+          "Başka bir ürünle ilgili bilgi almak ister misiniz? Yoksa ana menüye dönmek için \"ana menü\" yazabilirsiniz.",
+          "Ürün Seç",
+          INFO_PRODUCT_LABELS
+        );
+        break;
+      }
+
       if (BILGI_SORU_MODULLERI[infoKey]) {
         session.state = "URUN_BILGI_SORU";
         // Hangi urunun (dolayisiyla hangi PDF'e dayanan modulun) secildigini
@@ -1336,6 +1384,21 @@ async function handleIncoming(from, message) {
     }
 
     case "URUN_BILGI_SORU": {
+      // 31.07.2026 eklendi: musteri sadece "teşekkürler" gibi bir kapanis
+      // ifadesi yazdiginda, bu metin YANLISLIKLA soru-cevap moduluna (AI)
+      // gonderiliyordu - AI kibarca "Rica ederim..." gibi bir cevap
+      // uretiyordu, ardindan kod HER ZAMAN ekledigi "Başka bir sorunuz var
+      // mı?..." takip mesajini da gonderiyordu - musteriye ust uste iki mesaj
+      // gidiyordu (kullanicinin bildirdigi hata). Artik boyle bir kapanis
+      // ifadesi TEK BASINA gelirse AI'a hic sorulmuyor, TEK bir kisa tesekkur
+      // cevabi gonderiliyor.
+      if (KAPANIS_IFADE_REGEX.test(normalizeTr(userText.trim()))) {
+        await sendText(
+          from,
+          "Rica ederim, her zaman yardımcı olmaktan memnuniyet duyarız! 😊 Başka bir sorunuz olursa buradayım."
+        );
+        break;
+      }
       // session.bilgiUrunAnahtari, ASK_INFO_PRODUCT'ta hangi urun secildigini
       // (dolayisiyla hangi PDF'e dayanan modulun kullanilacagini) tutuyor.
       // Beklenmedik sekilde bos gelirse (orn. eski bir oturumdan kalma), TSS'e
@@ -1894,9 +1957,13 @@ async function cokSatirliMesajGonder(numara, metin) {
 // penceresi neredeyse KESINLIKLE kapali olur - sablon olmadan duz metin
 // bu durumda basarisiz olur).
 async function memnuniyetAnketiGonder(numara, musteriAdi, urunAdi) {
-  const ilkAd = (musteriAdi || "").trim().split(/\s+/)[0] || "";
+  // 31.07.2026 DUZELTILDI: musteriye HICBIR ZAMAN sadece ilk adiyla hitap
+  // edilmiyor (kullanicinin talebi - her zaman TAM isim-soyisim ve "siz"li
+  // resmi dil kullaniliyor) - bu yuzden ilk ad KIRPILMIYOR, musteriAdi (tam
+  // ad-soyad) oldugu gibi kullaniliyor.
+  const tamAd = (musteriAdi || "").trim();
   const metin =
-    `Merhaba ${ilkAd}! 😊 ${urunAdi} işleminizin üzerinden birkaç gün geçti, umarız her şey yolundadır.\n\n` +
+    `Merhaba ${tamAd}! 😊 ${urunAdi} işleminizin üzerinden birkaç gün geçti, umarız her şey yolundadır.\n\n` +
     `Bizimle olan deneyiminizi 1-5 arası bir puan ya da birkaç kelimeyle bizimle paylaşır mısınız? Geri bildiriminiz bizim için çok değerli. 🙏`;
 
   const sablonAdi = process.env.MEMNUNIYET_ANKETI_TEMPLATE_NAME;

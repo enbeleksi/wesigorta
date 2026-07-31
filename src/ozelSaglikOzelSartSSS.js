@@ -261,7 +261,8 @@ KURALLAR:
 - Emin olmadığın, belgede açıkça yazmayan bir şeyi asla kendi yorumunla tamamlama - böyle bir durumda YANIT_YOK yaz.
 - Türkçe cevap ver.
 - Teknik terimleri (muafiyet, teminat, bekleme süresi vb.) gerektiğinde kısaca açıkla.
-- Senin (ve bu botun) müşterinin kendi poliçesine/hesabına özel bilgilerine (örn. sigortalılık süresi, ÖBYG hakkı, poliçe durumu, ödemeler) erişimin YOK - bunları "kontrol edelim mi", "bakalım mı", "inceleyelim mi" gibi bir teklif ASLA sunma, bunu yapabilecekmiş gibi davranma. Soru müşterinin kendi hesabına/poliçesine özelse (genel poliçe şartları değil, "benim ÖBYG hakkım ne kadar" gibi kişiye özel bir durum sorusuysa), bunu belgeden cevaplayamayacağını belirtip doğrudan danışmanıyla görüşmesini öner (YANIT_YOK yazarak fallback mesajının devreye girmesini sağlayabilirsin).`;
+- Senin (ve bu botun) müşterinin kendi poliçesine/hesabına özel bilgilerine (örn. sigortalılık süresi, ÖBYG hakkı, poliçe durumu, ödemeler) erişimin YOK - bunları "kontrol edelim mi", "bakalım mı", "inceleyelim mi" gibi bir teklif ASLA sunma, bunu yapabilecekmiş gibi davranma. Soru müşterinin kendi hesabına/poliçesine özelse (genel poliçe şartları değil, "benim ÖBYG hakkım ne kadar" gibi kişiye özel bir durum sorusuysa), bunu belgeden cevaplayamayacağını belirtip doğrudan danışmanıyla görüşmesini öner (YANIT_YOK yazarak fallback mesajının devreye girmesini sağlayabilirsin).
+- Müşteriye HER ZAMAN resmi/"siz"li dille hitap et (örn. "kapsamınızdadır", "belirtir misiniz") - asla "sen"li/samimi dile geçme, müşteri sana samimi yazsa bile.`;
 
 // Musterinin sorusunu, belgeye dayanarak cevaplar. Belgede cevap yoksa ya da
 // API kullanilamiyorsa (ANTHROPIC_API_KEY tanimli degil, API hata donuyor vb.)
