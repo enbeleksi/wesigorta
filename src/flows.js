@@ -96,6 +96,41 @@ function saglikYetiskinMi(dogumTarihi) {
   return yasYil >= 18;
 }
 
+// 31.07.2026 eklendi: "Doğum sigortası eklemek ister misiniz?" sorusu (bkz.
+// saglikUrunuSorulari sonundaki "dogum_sigortasi_eklensin") SADECE Acıbadem'in
+// Doğum Sigortası'na (dogumSigortasiOzelSartSSS.js'teki belgenin 13. maddesi:
+// "18-45 yaş aralığındaki kişiler sigortalanabilmektedir") yaş/cinsiyet
+// kriterlerine uyan bir KADIN sigortalanıyorsa sorulmalı - kullanicinin acik
+// talebi. dogumTarihi ayristirilamiyorsa (beklenmeyen durum) guvenli tarafta
+// kalip UYGUN kabul ediyoruz (soru gereksiz yere atlanip potansiyel bir
+// musteri kacirilmasin diye) - saglikYetiskinMi ile AYNI yaklasim.
+function dogumSigortasiYasUygunMu(dogumTarihi) {
+  const ms = tarihiMsYap(dogumTarihi);
+  if (ms === null) return true;
+  const yasYil = (Date.now() - ms) / (365.25 * 24 * 60 * 60 * 1000);
+  return yasYil >= 18 && yasYil <= 45;
+}
+
+// Sigortalanan kisi(ler) arasinda yas/cinsiyet kriterlerine uyan (18-45 yas,
+// Kadın) EN AZ BIR kisi var mi diye bakar. "kimin_icin" ne olursa olsun
+// (Kendim/Eşim/Çocuğum), sigortalanacak kisinin cinsiyet/dogum_tarihi HER
+// ZAMAN answers.cinsiyet/answers.dogum_tarihi alanlarinda tutuluyor (bkz.
+// saglikKisiyeGoreMetin yorumu - metin degisir ama soru id'leri degismez).
+// "Ailem (Birden Fazla)" durumunda ADDITIONALLY answers.saglik_kisiler
+// dizisindeki (eş/çocuk, aile_dongu ile toplanan) herkes de kontrol edilir.
+function dogumSigortasiUygunKisiVarMi(answers) {
+  const anaKisiUygun =
+    answers.cinsiyet === "Kadın" && dogumSigortasiYasUygunMu(answers.dogum_tarihi);
+  if (anaKisiUygun) return true;
+
+  if (answers.kimin_icin === "Ailem (Birden Fazla)" && Array.isArray(answers.saglik_kisiler)) {
+    return answers.saglik_kisiler.some(
+      (kisi) => kisi.cinsiyet === "Kadın" && dogumSigortasiYasUygunMu(kisi.dogumTarihi)
+    );
+  }
+  return false;
+}
+
 // Ozel Saglik/TSS'de "kimin_icin" cevabina gore (Kendim/Eşim/Çocuğum/Ailem)
 // soru metnini secer. "Kendim" ve "Ailem (Birden Fazla)" AYNI davranir, cunku
 // "Ailem" durumunda bu STATIK sorular (ad_soyad/dogum_tarihi/cinsiyet/boy_kilo/
@@ -298,12 +333,17 @@ function saglikUrunuSorulari() {
     // otomatik gorunur (bkz. conversationEngine.js finishFlow, ID_KISA_ETIKET),
     // fiyat hesaplama YAPILMAZ, sadece danismana "musteri bunu da istiyor"
     // bilgisini tasir.
+    // 31.07.2026 GUNCELLENDI: kullanicinin talebi uzerine - bu soru SADECE
+    // Doğum Sigortası'nin yas/cinsiyet kriterlerine uyan (18-45 yas, Kadın) bir
+    // kisi sigortalaniyorsa soruluyor (bkz. dogumSigortasiUygunKisiVarMi),
+    // ayrica bekleme suresinden de kisaca bahsediliyor.
     {
       id: "dogum_sigortasi_eklensin",
-      text: "Son bir soru: Doğum Sigortası (hamilelik/doğum teminatı) da eklemek ister misiniz? Ayrı bir poliçe olarak sunulur, danışmanınız detaylarını sizinle paylaşacaktır.",
-      danismanText: "Doğum Sigortası (hamilelik/doğum teminatı) da eklensin mi?",
+      text: "Son bir soru: Doğum Sigortası (hamilelik/doğum teminatı) da eklemek ister misiniz? Ayrı bir poliçe olarak sunulur; poliçe başlangıcından en az 5 ay sonra başlayan hamilelikler için geçerlidir (bekleme süresi). Danışmanınız diğer detayları sizinle paylaşacaktır.",
+      danismanText: "Doğum Sigortası (hamilelik/doğum teminatı) da eklensin mi? (Poliçe başlangıcından en az 5 ay sonra başlayan hamilelikler için geçerli - bekleme süresi.)",
       type: "choice",
-      options: ["Evet", "Hayır"]
+      options: ["Evet", "Hayır"],
+      skipIf: (answers) => !dogumSigortasiUygunKisiVarMi(answers)
     }
   ];
 }
