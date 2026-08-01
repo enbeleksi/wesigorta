@@ -1014,6 +1014,30 @@ app.post("/api/panel/leads/:id/hatirlatma", panelAuth, (req, res) => {
   res.json({ ok: true, lead });
 });
 
+// --- Uretim / Yenileme Takibi (01.08.2026 eklendi) ---
+// "bizim bu excel dosyasina benzer bir dosya yapalim, panelde uretimleri
+// biz panele isleyelim" talebi uzerine - WhatsApp'tan Excel yuklemeyle AYNI
+// deponun (yenilemeStore) uzerinde, panelden dogrudan tek tek uretim satiri
+// girilebilmesi icin. Kaynagi ne olursa olsun (WhatsApp'tan tek tek "Yenileme
+// Ekle", WhatsApp'tan Excel toplu yukleme, ya da buradan panel) TUM kayitlar
+// AYNI /api/panel/uretim listesinde birlikte gorunur.
+app.get("/api/panel/uretim", panelAuth, (req, res) => {
+  res.json({ kayitlar: yenilemeStore.tumYenilemeleriGetir() });
+});
+
+app.post("/api/panel/uretim", panelAuth, (req, res) => {
+  const { musteriAdi, danismanAdi, policeNo, tanzimTarihi, urun, sirket } = req.body;
+  const sonuc = yenilemeStore.panelUretimSatiriEkle({ musteriAdi, danismanAdi, policeNo, tanzimTarihi, urun, sirket });
+  if (sonuc.hata) return res.status(400).json({ error: sonuc.hata });
+  res.json(sonuc);
+});
+
+app.delete("/api/panel/uretim/:id", panelAuth, (req, res) => {
+  const silindiMi = yenilemeStore.yenilemeSil(req.params.id);
+  if (!silindiMi) return res.status(404).json({ error: "Kayıt bulunamadı" });
+  res.json({ ok: true });
+});
+
 // --- Istatistikler ---
 // Tum talep verisinden ozet metrikler cikartir: urun bazinda, danisman
 // bazinda, durum bazinda dagilim, donusum orani, son 7/30 gunluk talep sayisi.

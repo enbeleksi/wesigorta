@@ -190,6 +190,13 @@ function tarihiCikar(deger) {
     if (!isNaN(d.getTime())) return { yil: d.getUTCFullYear(), ay: d.getUTCMonth() + 1, gun: d.getUTCDate() };
   }
   const metin = (deger || "").toString().trim();
+  // ISO formati (YYYY-AA-GG) - panelde <input type="date"> bu formati
+  // uretir, bu yuzden 01.08.2026'da eklendi (Excel dosyasindaki GG.AA.YYYY
+  // formatina ek olarak, onu DEGISTIRMEDEN).
+  const isoEslesme = metin.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (isoEslesme) {
+    return { yil: Number(isoEslesme[1]), ay: Number(isoEslesme[2]), gun: Number(isoEslesme[3]) };
+  }
   const eslesme = metin.match(/^(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{4})$/);
   if (eslesme) {
     return { gun: Number(eslesme[1]), ay: Number(eslesme[2]), yil: Number(eslesme[3]) };
@@ -414,6 +421,10 @@ function uretimExceliYukle(buffer, dosyaAdi) {
       oncekiKayit.policeNo = aday.policeNo;
       oncekiKayit.sirket = aday.sirket;
       oncekiKayit.bitisTarihi = bitisTarihi;
+      // 01.08.2026 eklendi: panel/Excel kaynakli tum kayitlarin ayni sekilde
+      // "tanzim tarihi"ni de saklamasi icin (bkz. panelUretimSatiriEkle) -
+      // salt goruntuleme amacli, is mantiginda kullanilmiyor.
+      oncekiKayit.tanzimTarihi = aday.tanzimMs;
       // Tarih degistiyse (yeni bir donem tespit edildiyse), daha once
       // "Bekleyen İş"e donusturulmus olsa bile bu YENI donem icin tekrar
       // 15-gun-kala kontrolune girsin diye bayragi sifirliyoruz.
@@ -433,6 +444,7 @@ function uretimExceliYukle(buffer, dosyaAdi) {
         policeNo: aday.policeNo,
         sirket: aday.sirket,
         bitisTarihi,
+        tanzimTarihi: aday.tanzimMs,
         kaynak: "excel_import",
         kaynakDosyaAdi: dosyaAdi || null,
         _grupAnahtari: anahtar,
@@ -445,6 +457,125 @@ function uretimExceliYukle(buffer, dosyaAdi) {
   }
 
   return { eklenen, guncellenen, atlanan, toplamSatir: satirlar.length };
+}
+
+// --- Panelden TEK satirlik uretim girisi (01.08.2026 eklendi) ---
+// "bizim bu excel dosyasina benzer bir dosya yapalim, panelde uretimleri
+// biz panele isleyelim" talebi uzerine - Enbel/Bahadir'in WhatsApp'tan
+// Excel yuklemesi yerine (ya da onunla BIRLIKTE - ikisi de kaliyor) tek tek
+// panelden de üretim satiri girebilmesi icin. Excel toplu yuklemedeki AYNI
+// is kurallarini (urunDurumuCoz, danisman eslesmesi, tanzim+1yil) kullanir,
+// AMA tek satirlik oldugu icin bazi farklar var:
+// 1) "musteri+urun" grubu ARTIK sadece excel_import DEGIL, hem excel_import
+//    HEM DE panel_manuel kaynakli kayitlar arasinda araniyor - boylece ayni
+//    police panelden veya Excel'den (hangi sirayla olursa olsun) girilse
+//    bile TEK bir kayitta birlesir, kopya olusmaz.
+// 2) Donem-ici duz "ZEYİL" girilirse hicbir kayit olusturulmaz/degismez -
+//    tek satirlik bir girdi oldugu icin zaten "esas alinacak" baska bir
+//    satir yok, sadece bilgilendirici bir sonuc donuyoruz.
+// 3) SONLANDIRMA (iptal/iade/satistan zeyil) girilirse VE ayni musteri+urun
+//    icin daha once otomatik olusturulmus bir kayit VARSA, o kayit SILINIR
+//    (Excel toplu yuklemedeki davranistan BILINCLI olarak farkli - orada
+//    bir sonraki dosya yuklemesinde ayni satir gorulmeyebilir diye
+//    dokunulmuyordu, ama panelden TEK TEK "bu poliçe artik yenilenmeyecek"
+//    diye ELLE girildiginde, hatirlatmanin da hemen kalkmasi beklenir).
+// Elle ("Yenileme Ekle" ile, kaynak: "danisman") girilmis TEK TEK kayitlara
+// buradan KESINLIKLE dokunulmuyor - Excel akisindaki AYNI ilke.
+function panelUretimSatiriEkle({ musteriAdi, danismanAdi, policeNo, tanzimTarihi, urun, sirket }) {
+  const musteriAdiTemiz = (musteriAdi || "").toString().trim();
+  const urunHam = (urun || "").toString().trim();
+  if (!musteriAdiTemiz) return { hata: "Sigortalı adı soyadı zorunlu." };
+  if (!urunHam) return { hata: "Ürün bilgisi zorunlu." };
+
+  const tarih = tarihiCikar(tanzimTarihi);
+  if (!tarih) return { hata: "Tanzim tarihi okunamadı - lütfen geçerli bir tarih girin." };
+
+  const { baseTipi, terminationEvent, sadeceDonemIciDegisiklik } = urunDurumuCoz(urunHam);
+  if (!baseTipi) return { hata: "Ürün tipi tanınamadı." };
+
+  const anahtar = `${normalizeTr(musteriAdiTemiz).trim()}||${baseTipi}`;
+
+  let oncekiKayit = null;
+  for (const kayit of yenilemeler.values()) {
+    if ((kayit.kaynak === "excel_import" || kayit.kaynak === "panel_manuel") && kayit._grupAnahtari === anahtar) {
+      oncekiKayit = kayit;
+      break;
+    }
+  }
+
+  if (sadeceDonemIciDegisiklik) {
+    return {
+      bilgi:
+        "Bu dönem-içi bir zeyil olarak algılandı - mevcut yenileme tarihini etkilemediği için herhangi bir kayıt oluşturulmadı/değiştirilmedi."
+    };
+  }
+
+  if (terminationEvent) {
+    if (oncekiKayit) {
+      yenilemeler.delete(oncekiKayit.id);
+      return { silindi: true, silinenKayit: oncekiKayit };
+    }
+    return {
+      bilgi:
+        "İptal/iade/satıştan zeyil olarak algılandı - takip edilen aktif bir kayıt olmadığı için (ya da zaten daha önce kaldırıldığı için) bir işlem yapılmadı."
+    };
+  }
+
+  const dogrudanCozulen = danismanNumarasiIsimdenBul(danismanAdi);
+  const danismanKaydi = dogrudanCozulen || varsayilanDanisman();
+  const disKaynakMi = !dogrudanCozulen;
+  const danismanAdiTemiz = (danismanAdi || "").toString().trim();
+  const danismanAdiGosterim = dogrudanCozulen
+    ? dogrudanCozulen.name
+    : danismanAdiTemiz || (danismanKaydi ? danismanKaydi.name : null);
+  const bitisTarihi = yenilemeTarihiHesapla(tarih);
+  const tanzimMs = new Date(tarih.yil, tarih.ay - 1, tarih.gun).getTime();
+  const policeNoTemiz = (policeNo || "").toString().trim() || null;
+  const sirketTemiz = (sirket || "").toString().trim() || null;
+
+  if (oncekiKayit) {
+    const degisti = oncekiKayit.bitisTarihi !== bitisTarihi;
+    oncekiKayit.musteriAdi = musteriAdiTemiz;
+    oncekiKayit.urun = urunHam;
+    oncekiKayit.danismanNumarasi = danismanKaydi ? danismanKaydi.number : oncekiKayit.danismanNumarasi;
+    oncekiKayit.danismanAdi = danismanAdiGosterim || oncekiKayit.danismanAdi;
+    oncekiKayit.disKaynak = disKaynakMi;
+    oncekiKayit.policeNo = policeNoTemiz;
+    oncekiKayit.sirket = sirketTemiz;
+    oncekiKayit.bitisTarihi = bitisTarihi;
+    oncekiKayit.tanzimTarihi = tanzimMs;
+    if (degisti) oncekiKayit.bekleyenIseAktarildiMi = false;
+    return { guncellendi: true, kayit: oncekiKayit };
+  }
+
+  sayac += 1;
+  const id = `Y${Date.now()}${sayac}`;
+  const kayit = {
+    id,
+    danismanNumarasi: danismanKaydi ? danismanKaydi.number : null,
+    danismanAdi: danismanAdiGosterim,
+    disKaynak: disKaynakMi,
+    musteriAdi: musteriAdiTemiz,
+    urun: urunHam,
+    plaka: null,
+    policeNo: policeNoTemiz,
+    sirket: sirketTemiz,
+    bitisTarihi,
+    tanzimTarihi: tanzimMs,
+    kaynak: "panel_manuel",
+    _grupAnahtari: anahtar,
+    bekleyenIseAktarildiMi: false,
+    olusturulmaZamani: Date.now()
+  };
+  yenilemeler.set(id, kayit);
+  return { eklendi: true, kayit };
+}
+
+// Panelden bir yenileme kaydini (kaynagi ne olursa olsun - elle, Excel ya
+// da panel girisi) tamamen silmek icin (orn. yanlislikla girilmis bir
+// satiri duzeltmek). 01.08.2026 eklendi.
+function yenilemeSil(id) {
+  return yenilemeler.delete(id);
 }
 
 // Sunucu baslarken bir kez cagrilir - DB'de kayitli yenilemeler varsa belleğe yukler.
@@ -469,6 +600,8 @@ module.exports = {
   zamaniGelenYenilemeler,
   yenilemeBekleyenIseAktarildiIsaretle,
   uretimExceliYukle,
+  panelUretimSatiriEkle,
+  yenilemeSil,
   yukle,
   kaydet
 };
