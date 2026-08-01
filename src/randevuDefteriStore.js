@@ -202,6 +202,58 @@ function excelYukle(danismanNumarasi, danismanAdi, buffer, dosyaAdi) {
   return { eklenen, atlanan, toplamSatir: satirlar.length };
 }
 
+// 01.08.2026 eklendi: "Randevu Oluştur" menüsünden - yani bir Excel dosyası
+// olmadan, danışmanın WhatsApp'ta doğrudan yazdığı ad/telefon ile - TEK bir
+// kayıt oluşturur. excelYukle'deki satır işleme mantığıyla AYNI kurallara
+// tabidir (telefon geçerliliği, GLOBAL numara tekrarı kontrolü - bkz. dosya
+// başındaki NOT) - sadece şirket/vergi/yaş gibi Excel'e özgü alanlar boş
+// kalır (bu akışta hiç sorulmuyor). Kayıt "durum: null" (henüz aranmamış/
+// beklemede) olarak baslar - cagiran taraf (advisorEngine.js) hemen
+// ardından olumluIsaretle ile randevu bilgisini ekler.
+function manuelKayitOlustur(danismanNumarasi, danismanAdi, adSoyad, telefonHam) {
+  const adSoyadTemiz = (adSoyad || "").toString().trim();
+  if (!adSoyadTemiz) {
+    return { hata: "Ad Soyad boş olamaz." };
+  }
+
+  const normalizeTel = normalizeTelefon(telefonHam);
+  if (!normalizeTel) {
+    return { hata: "Telefon numarası geçersiz görünüyor - lütfen 05XX XXX XX XX formatında yazar mısınız?" };
+  }
+
+  if (numaraBaskaBirKayitaAitMi(normalizeTel)) {
+    return {
+      hata: "Bu numara sistemde zaten kayıtlı (başka bir danışmanda olabilir) - bu müşteriyle randevu oluşturamıyorum."
+    };
+  }
+
+  sayac += 1;
+  const id = `RD${Date.now()}${sayac}`;
+  const kayit = {
+    id,
+    danismanNumarasi,
+    danismanAdi: danismanAdi || null,
+    adSoyad: adSoyadTemiz,
+    telefon: normalizeTel,
+    sirketAdi: null,
+    vergiNumarasi: null,
+    sirketTuru: null,
+    sonDonemVergisi: null,
+    yas: null,
+    durum: null,
+    olumsuzNedeni: null,
+    randevu: null,
+    tekrarArama: null,
+    excelKaynakDosyaAdi: null, // Excel'den degil, "Randevu Oluştur" menüsünden manuel eklendi
+    eklenmeZamani: Date.now(),
+    guncellenmeZamani: Date.now()
+  };
+
+  kayitlar.set(id, kayit);
+  telefonIndex.set(normalizeTel, id);
+  return { kayit };
+}
+
 function danismanKayitlariGetir(danismanNumarasi) {
   return Array.from(kayitlar.values()).filter((k) => k.danismanNumarasi === danismanNumarasi);
 }
@@ -387,6 +439,7 @@ async function kaydet() {
 
 module.exports = {
   excelYukle,
+  manuelKayitOlustur,
   danismanKayitlariGetir,
   kayitGetir,
   rastgeleMusteriGetir,

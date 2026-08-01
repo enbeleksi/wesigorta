@@ -16,6 +16,8 @@ const engelliNumaralarStore = require("./engelliNumaralarStore");
 const dokumanStore = require("./dokumanStore");
 // 31.07.2026 eklendi (Randevu Defterim ozelligi).
 const randevuDefteriStore = require("./randevuDefteriStore");
+// 01.08.2026 eklendi: "resmi tatillerin hiçbirinde çalışmıyoruz" kurali icin.
+const resmiTatiller = require("./resmiTatiller");
 const { dosyaTuruIzinliMi } = require("./izinliDosyaTurleri");
 // Randevu Defterim'de yuklenen dosyanin GERCEKTEN bir Excel dosyasi olmasi
 // gerekiyor (dosyaTuruIzinliMi'nin izin verdigi PDF/Word/foto turleri degil).
@@ -254,10 +256,26 @@ const SAAT_ARALIKLARI = ["08:00-10:00", "10:00-12:00", "12:00-14:00", "14:00-16:
 // eklenmiyor (bkz. asagida bugundenBaslayanHaftaIciGunleri).
 const BUGUN_ICIN_SON_MAKUL_DK = 16 * 60 - 120;
 
+function ikiHane(n) {
+  return String(n).padStart(2, "0");
+}
+
+// Bir Date'in kanonik "GG.AA.YYYY" karsiligi - resmiTatiller.js'deki
+// haritanin anahtar formatiyla AYNI (asagida hem gun uretiminde hem de
+// tekrar arama tarihi kontrolunde kullaniliyor).
+function tarihiKanonikYaz(tarih) {
+  return `${ikiHane(tarih.getDate())}.${ikiHane(tarih.getMonth() + 1)}.${tarih.getFullYear()}`;
+}
+
 // Bugunden baslayarak (gerekirse yarindan), hafta sonlarini (Cumartesi/
-// Pazar) ATLAYARAK ilk `adet` kadar HAFTA ICI gunu Date olarak dondurur -
-// cagri merkezi hafta sonlari calismiyor, bu yuzden secenek olarak hic
-// sunmuyoruz.
+// Pazar) VE resmi tatilleri (bkz. resmiTatiller.js - kullanicinin talebi:
+// "resmi tatillerin hiçbirinde çalışmıyoruz ... randevu de almıyoruz resmi
+// tatillere") ATLAYARAK ilk `adet` kadar UYGUN is gunu Date olarak dondurur
+// - cagri merkezi hafta sonlari/resmi tatillerde calismiyor, bu yuzden
+// secenek olarak hic sunmuyoruz. Bu fonksiyon HEM Garanti Emeklilik "arama
+// randevusu" gun secimi HEM DE Randevu Defterim'in randevu gun secimi
+// tarafindan ORTAK kullanildigi icin, resmi tatil hariç tutma kurali otomatik
+// olarak HER IKI akista da gecerli olur.
 function bugundenBaslayanHaftaIciGunleri(adet) {
   const simdi = new Date();
   const simdiDk = simdi.getHours() * 60 + simdi.getMinutes();
@@ -268,16 +286,14 @@ function bugundenBaslayanHaftaIciGunleri(adet) {
   const gunler = [];
   while (gunler.length < adet) {
     const gun = cursor.getDay();
-    if (gun !== 0 && gun !== 6) {
+    const haftaSonuMu = gun === 0 || gun === 6;
+    const resmiTatilMi = !haftaSonuMu && resmiTatiller.tatilAdiGetir(tarihiKanonikYaz(cursor));
+    if (!haftaSonuMu && !resmiTatilMi) {
       gunler.push(new Date(cursor));
     }
     cursor = new Date(cursor.getTime() + 24 * 60 * 60 * 1000);
   }
   return gunler;
-}
-
-function ikiHane(n) {
-  return String(n).padStart(2, "0");
 }
 
 // Bir Date'i hem kanonik deger ("GG.AA.YYYY") hem de danismana gosterilecek
@@ -347,6 +363,65 @@ function aramaSaatAraligiSecenekleri(answers) {
   // liste yerine tum araliklari gosterip kullaniciyi tikanmis birakmamak
   // daha güvenli - saatAraligiGecerliMi zaten gecmis bir secimi reddedecektir.
   return uygunlar.length > 0 ? uygunlar : SAAT_ARALIKLARI;
+}
+
+// 01.08.2026 eklendi: kullanicinin talebi uzerine - Randevu Defterim'in
+// randevu SAATI artik "08:00-10:00" gibi 2 saatlik bir ARALIK degil, 09:30'dan
+// 18:00'a kadar yarimsar saat araliklarla DOGRUDAN SECILEBILEN bir saat
+// ("09:30", "10:00", ... "18:00" - 18 adet). NOT: bu SADECE randevu
+// (appointment) saati icin gecerli - Garanti Emeklilik "arama randevusu"
+// akisi (aramaSaatAraligiSecenekleri/SAAT_ARALIKLARI, yukarida) DEGISTIRILMEDI,
+// hala eski 2 saatlik araliklari kullaniyor - kullanicinin talebi sadece
+// randevu saati icindi.
+const RANDEVU_SAAT_BASLANGIC_DK = 9 * 60 + 30; // 09:30
+const RANDEVU_SAAT_BITIS_DK = 18 * 60; // 18:00
+const RANDEVU_SAAT_ADIM_DK = 30;
+
+// Tum olasi randevu saatlerini ("09:30".."18:00", 18 adet) dondurur - saat
+// dilimi filtrelemesinden BAGIMSIZ, sadece "bu deger gecerli bir randevu
+// saati mi" kontrolu icin de kullanilir (bkz. DANISMAN_RANDEVU_DEFTERI_
+// RANDEVU_SAAT case'i).
+function tumRandevuSaatleri() {
+  const saatler = [];
+  for (let dk = RANDEVU_SAAT_BASLANGIC_DK; dk <= RANDEVU_SAAT_BITIS_DK; dk += RANDEVU_SAAT_ADIM_DK) {
+    saatler.push(`${ikiHane(Math.floor(dk / 60))}:${ikiHane(dk % 60)}`);
+  }
+  return saatler;
+}
+
+// Secilen randevu gunu icin uygun saatleri dondurur - gun BUGUNSE, su anki
+// saatten (+2 saat kurali ile, arama randevusuyla AYNI kural) once kalan
+// saatler cikarilir.
+function randevuSaatSecenekleri(tarihStr) {
+  const tumu = tumRandevuSaatleri();
+  if (!tarihStr || !aramaTarihiBugunMu(tarihStr)) {
+    return tumu;
+  }
+  const simdi = new Date();
+  const simdiDk = simdi.getHours() * 60 + simdi.getMinutes();
+  return tumu.filter((s) => {
+    const [saat, dk] = s.split(":").map(Number);
+    return saat * 60 + dk >= simdiDk + 120;
+  });
+}
+
+// WhatsApp interaktif liste mesaji TUM bolumler dahil en fazla 10 satir
+// destekliyor (resmi Meta dokumantasyonu) - 18 adet yarim saatlik randevu
+// saati bu siniri asiyor. Bu yuzden, uygun saat sayisi 10'u astiginda once
+// "Sabah" / "Öğleden Sonra" (sendButtons, max 3 secenek destekler) sorulup,
+// sadece secilen yarinin (<=9 satir kalan) saatleri listede gosteriliyor.
+// Uygun saat sayisi <=10 ise (orn. gunun ilerleyen saatlerinde "bugun"
+// secildiginde) bu ara adim atlanip tum liste dogrudan gosteriliyor.
+const RANDEVU_YARIM_GUN_SECENEKLERI = ["Sabah", "Öğleden Sonra"];
+const RANDEVU_YARIM_GUN_SINIR_DK = 14 * 60; // 14:00
+
+function randevuYarimGunSaatleri(tarihStr, yarimGun) {
+  const secenekler = randevuSaatSecenekleri(tarihStr);
+  return secenekler.filter((s) => {
+    const [saat, dk] = s.split(":").map(Number);
+    const toplamDk = saat * 60 + dk;
+    return yarimGun === "Sabah" ? toplamDk < RANDEVU_YARIM_GUN_SINIR_DK : toplamDk >= RANDEVU_YARIM_GUN_SINIR_DK;
+  });
 }
 
 // Bir soru metnini, akisi kimin baslattigina gore (danisman mi, yoksa
@@ -1093,7 +1168,13 @@ const KAPANIS_IFADE_REGEX = /^(cok\s+)?(tesekkur(ler)?(\s+ederim)?|sagol|saol|el
 // bu listeden rastgele musteri secip aradiktan sonra sonucu kaydedebildigi
 // ozellik. Tum is mantigi randevuDefteriStore.js'te; burada sadece WhatsApp
 // menu/soru akisi var.
-const RANDEVU_DEFTERI_MENU_SECENEKLERI = ["Excel Yükle", "Müşteri Ara", "Kayıtlarım", "Ana Menü"];
+// 01.08.2026 DUZELTILDI: kullanicinin talebi uzerine sira ve isimler
+// degistirildi ("Excel Yükle" -> "Referans Yükle", "Ana Menü" -> "Ana
+// Menüye Dön") ve yeni bir "Randevu Oluştur" secenegi eklendi - artik
+// randevu SADECE Excel'den cekilip aranan bir musteriyle degil, dogrudan bu
+// menuden manuel ad/telefon girilerek de olusturulabiliyor (bkz.
+// randevuDefteriManuelBaslat).
+const RANDEVU_DEFTERI_MENU_SECENEKLERI = ["Müşteri Ara", "Randevu Oluştur", "Kayıtlarım", "Referans Yükle", "Ana Menüye Dön"];
 const RANDEVU_DEFTERI_DURUM_SECENEKLERI = [
   "Olumlu",
   "Olumsuz",
@@ -2375,10 +2456,90 @@ async function satistanIptalTalebiOlustur(from, analiz, orijinalBuffer, orijinal
 }
 
 // --- Yenileme Ekle: satis/talep akisindan bagimsiz, manuel police yenileme kaydi ---
+// 01.08.2026 eklendi: kullanicinin "toplu Excel girişi" talebi uzerine, tek
+// tek elle girmenin yaninda ikinci bir giris yolu eklendi - bkz.
+// yenilemeExcelYuklemeBaslat/yenilemeExcelIsle.
+const YENILEME_EKLEME_MENU_SECENEKLERI = ["Tek Tek Ekle", "Excel ile Toplu Yükle"];
+
+async function yenilemeEklemeMenuGoster(from, session) {
+  session.state = "DANISMAN_YENILEME_EKLEME_MENU";
+  await sendButtons(
+    from,
+    "Yenileme kaydını nasıl eklemek istersiniz?",
+    YENILEME_EKLEME_MENU_SECENEKLERI
+  );
+}
+
 async function yenilemeBaslat(from, session) {
   session.state = "DANISMAN_YENILEME_MUSTERI_BEKLE";
   session.yenilemeVerisi = {};
   await sendText(from, "Sigortalının adını ve soyadını paylaşır mısınız?");
+}
+
+// 01.08.2026 eklendi: Enbel'in gercek "ELEMENTER ÜRETİM TAKİP" dosyasinin
+// formatina gore (bkz. yenilemeStore.js'teki uretimExceliYukle) toplu
+// yenileme kaydi olusturma/guncelleme. Danisman DOSYAYI KENDI numarasindan
+// gonderse bile, her satirin sahibi dosyadaki ARACI sutunundan cozuluyor -
+// yani bu dosyayi kim yuklerse yuklesin sonuc ayni (butun danismanlarin
+// kayitlarini iceren TEK bir dosya, hepsi dogru kisiye atanarak isleniyor).
+async function yenilemeExcelYuklemeBaslat(from, session) {
+  session.state = "DANISMAN_YENILEME_EXCEL_BEKLE";
+  await sendText(
+    from,
+    "📥 Üretim takip Excel dosyanızı (ELEMENTER ÜRETİM TAKİP formatında) gönderebilirsiniz.\n\n" +
+      "Dosyada şu sütunlar tanınıyor: Sigortalı Adı Soyadı, Aracı, Poliçe No, Tanzim Tarihi, Ürün, Şirket " +
+      "(ilk sayfa, başlıklar hangi satırda olursa olsun otomatik bulunur).\n\n" +
+      "Her ürün için yenileme tarihi \"tanzim tarihi + 1 yıl\" olarak hesaplanır; iptal/iade/satıştan zeyil " +
+      "gibi işlemlerle sonlanan poliçeler otomatik olarak dışarıda bırakılır.\n\n" +
+      "Hazır olduğunda dosyayı buraya (WhatsApp'tan belge/döküman olarak) gönderebilirsiniz. 📎"
+  );
+}
+
+const YENILEME_EXCEL_ATLANAN_MAX_GOSTER = 8;
+
+async function yenilemeExcelIsle(from, session, buffer, dosyaAdi) {
+  const sonuc = yenilemeStore.uretimExceliYukle(buffer, dosyaAdi);
+
+  if (sonuc.hata) {
+    await sendText(from, `❌ ${sonuc.hata}`);
+    return; // ayni state'te kaliyoruz, danisman duzeltilmis dosyayi tekrar gonderebilir
+  }
+
+  // 01.08.2026 DUZELTILDI: artik ARACI ismi eslesmeyen kayitlar atanmadan
+  // kalmiyor (bkz. yenilemeStore.js'teki varsayilanDanisman) - bunun yerine
+  // Bahadır'a dusuyor (bildirim/telefon acisindan), ama gosterilen
+  // danismanAdi dogrudan o kisinin kendi ismi (Enbel'in talebi uzerine -
+  // "dış kaynak yazmana gerek yok ... bahadır tanıyor hepsini anlar").
+  // Kac tanesinin boyle dus-kaynakli oldugunu yine de ic raporlama icin
+  // sayiyoruz - bunun icin GORUNEN isim degil, ayri disKaynak alani kullanilir.
+  const disKaynakliSayisi = [...sonuc.eklenen, ...sonuc.guncellenen].filter((k) => k.disKaynak).length;
+  const gecmisSayisi = [...sonuc.eklenen, ...sonuc.guncellenen].filter((k) => k.bitisTarihi < Date.now()).length;
+
+  let mesaj =
+    `Üretim dosyası işlendi ✅\n\n` +
+    `Toplam satır: ${sonuc.toplamSatir}\n` +
+    `Yeni yenileme kaydı: ${sonuc.eklenen.length}\n` +
+    `Güncellenen kayıt: ${sonuc.guncellenen.length}\n` +
+    `Atlanan (iptal/hatalı/tanınmayan): ${sonuc.atlanan.length}`;
+
+  if (disKaynakliSayisi > 0) {
+    mesaj += `\n\n👥 ${disKaynakliSayisi} kayıt, "Aracı" sütunundaki isim bizim danışmanlarımızla eşleşmediği için dış kaynak olarak Bahadır'a düştü (Enbel de ekip özetinde görecek).`;
+  }
+  if (gecmisSayisi > 0) {
+    mesaj += `\n\n🔴 ${gecmisSayisi} kaydın hesaplanan yenileme tarihi bugünden önce görünüyor (çok eski/tek seferlik tanzimler olabilir) - bunlar önümüzdeki günlük özetlerde "gecikmiş" olarak çıkacak, gözden geçirmeniz iyi olur.`;
+  }
+
+  if (sonuc.atlanan.length > 0) {
+    const gosterilecekler = sonuc.atlanan.slice(0, YENILEME_EXCEL_ATLANAN_MAX_GOSTER);
+    const satirlar = gosterilecekler.map((a) => `• Satır ${a.satirNo} (${a.adSoyad} - ${a.urun}): ${a.sebep}`);
+    mesaj += `\n\n${satirlar.join("\n")}`;
+    if (sonuc.atlanan.length > gosterilecekler.length) {
+      mesaj += `\n...ve ${sonuc.atlanan.length - gosterilecekler.length} tane daha.`;
+    }
+  }
+
+  await sendText(from, mesaj);
+  await devamMenuGoster(from, session);
 }
 
 async function yenilemeUrunSor(from, session) {
@@ -2645,27 +2806,84 @@ async function randevuDefteriYanlisNumaraTamamla(from, session) {
   await randevuDefteriMenuGoster(from, session);
 }
 
-// NOT: tarih+saat girisi icin ayri iki soru (once gun, sonra saat) yerine
-// leadStore hatirlatmasindaki (DANISMAN_HATIRLATMA_TARIH_BEKLE) ile AYNI
-// TEK mesajlik "GG.AA.YYYY SS:DD" formati kullaniliyor - hem daha az adim
-// hem de daha onemlisi tarihSaatDogrula (yukarida, 20.07.2026 hatirlatma
-// gecikmesi vakasindan sonra saat dilimi hatasina karsi ozel olarak
-// duzeltilmis fonksiyon) zaten TAM bu formati bekliyor. Randevu/tekrar arama
-// icin AYRI bir naif tarih+saat birlestirme fonksiyonu YAZILMADI ki ayni
-// saat dilimi hatasi (sunucu UTC calisirken 3 saat kayma) kazara tekrar
-// eklenmesin.
-async function randevuDefteriRandevuTarihSor(from, session) {
-  session.state = "DANISMAN_RANDEVU_DEFTERI_RANDEVU_TARIH";
+// 01.08.2026 DUZELTILDI: kullanicinin talebi uzerine randevu gunu/saati
+// artik serbest metin ("GG.AA.YYYY SS:DD" yazma) yerine, Garanti Emeklilik
+// "arama randevusu" akisindaki (yukarida, "Arama tarihi/saati icin secenek
+// uretimi" basligi altindaki aramaTarihiKisaSecenekleri/
+// aramaSaatAraligiSecenekleri) ile AYNI liste-secim UX'i kullaniyor - once
+// hafta ici 5 gunden biri (Bugün/Yarın/Gün adı), sonra o gun icin uygun
+// saat araligi listeden secilir. Bu HEM danisman icin daha hizli/hatasiz
+// HEM DE aslinda ayni saat dilimi guvenligini koruyor: secilen kanonik
+// "GG.AA.YYYY" degeri + secilen araligin baslangic saati birlestirilip yine
+// tarihSaatDogrula'ya verilir (20.07.2026 hatirlatma gecikmesi vakasindan
+// sonra saat dilimine karsi ozel olarak sertlestirilmis fonksiyon) - yani
+// naif bir tarih+saat birlestirme YINE yazilmadi. NOT: bu SADECE randevu
+// (appointment) tarih/saati icin gecerli - "tekrar arama" (yeniden aranacak/
+// ulasilamadi) hatirlaticisi hala eski serbest-metin "GG.AA.YYYY SS:DD"
+// formatinda (bkz. asagidaki randevuDefteriTekrarTarihSor) - kullanicinin
+// talebi sadece randevu gunu/saati icindi.
+//
+// Bu fonksiyon HEM "Müşteri Ara" -> "Olumlu" akisindan (mevcut bir kayit
+// zaten session.randevuDefteriSeciliId'de secili) HEM DE "Randevu Oluştur"
+// menusunden (randevuDefteriManuelTelefonAl basarili oldugunda, YENI
+// olusturulan kaydin id'si session.randevuDefteriSeciliId'ye atanmis olarak)
+// AYNI sekilde cagrilir - randevuDefteriRandevuTamamla'nin gormesi
+// acisindan iki akis arasinda fark yoktur, ikisinde de "secili bir kayit"
+// vardir.
+async function randevuDefteriRandevuGunSor(from, session) {
+  session.state = "DANISMAN_RANDEVU_DEFTERI_RANDEVU_GUN";
   session.randevuDefteriGecici = {};
-  await sendText(
-    from,
-    "Tebrikler! 🎉 Randevu ne zaman? GG.AA.YYYY SS:DD formatında yazar mısınız? (Örn: 10.08.2026 14:30)"
-  );
+  await sendList(from, "Tebrikler! 🎉 Randevu için hangi gün uygun?", "Seçin", aramaTarihiKisaSecenekleri());
+}
+
+// 01.08.2026 DUZELTILDI: kullanicinin talebi uzerine artik "08:00-10:00" gibi
+// bir ARALIK degil, dogrudan "09:30".."18:00" arasi yarim saatlik bir SAAT
+// seciliyor (bkz. tumRandevuSaatleri/randevuSaatSecenekleri yukarida).
+// WhatsApp'in 10 satirlik liste sinirindan dolayi, uygun saat sayisi 10'u
+// asarsa once Sabah/Öğleden Sonra sorulur (bkz. RANDEVU_YARIM_GUN_SECENEKLERI).
+async function randevuDefteriRandevuSaatSor(from, session) {
+  const secenekler = randevuSaatSecenekleri(session.randevuDefteriGecici.tarihStr);
+  if (secenekler.length === 0) {
+    await sendText(from, "Bu gün için uygun bir randevu saati kalmadı 🙏 Lütfen başka bir gün seçer misiniz?");
+    await randevuDefteriRandevuGunSor(from, session);
+    return;
+  }
+  if (secenekler.length <= 10) {
+    session.state = "DANISMAN_RANDEVU_DEFTERI_RANDEVU_SAAT";
+    await sendList(from, "Hangi saat uygun?", "Seçin", secenekler);
+    return;
+  }
+  session.state = "DANISMAN_RANDEVU_DEFTERI_RANDEVU_YARIM_GUN";
+  await sendButtons(from, "Randevu için sabah (09:30-13:30) mı, öğleden sonra (14:00-18:00) mı uygun?", RANDEVU_YARIM_GUN_SECENEKLERI);
 }
 
 async function randevuDefteriRandevuYerSor(from, session) {
   session.state = "DANISMAN_RANDEVU_DEFTERI_RANDEVU_YER";
   await sendText(from, "Randevu nerede olacak? (Örn: Kadıköy Ofis, müşterinin iş yeri vb.)");
+}
+
+// --- "Randevu Oluştur" menüsü (01.08.2026 eklendi) ---
+// Excel'den ice aktarilmis/aranmis bir kayit olmadan, dogrudan bu menuden
+// manuel olarak ad+telefon girilip randevu olusturulabilmesi icin
+// (kullanicinin talebi: "illa excel'den yapılan aramalardan değil"). Ad ve
+// telefon alindiktan hemen SONRA (randevu tarih/saati beklenmeden) kayit
+// randevuDefteriStore'a yazilir - boylece GLOBAL numara tekrari kontrolu
+// (bkz. randevuDefteriStore.js dosya basi NOT'u) en erken asamada devreye
+// girer, danisman tum randevu akisini bosuna doldurmaz. Kayit olusturulur
+// olusturulmaz session.randevuDefteriSeciliId bu yeni kaydin id'sine
+// atanir - boylece devamindaki gun/saat/yer adimlari ve
+// randevuDefteriRandevuTamamla, "Müşteri Ara" akisindan hicbir farki
+// olmadan ayni sekilde calisir.
+async function randevuDefteriManuelBaslat(from, session) {
+  session.state = "DANISMAN_RANDEVU_DEFTERI_MANUEL_AD";
+  session.randevuDefteriGecici = {};
+  session.randevuDefteriSeciliId = null;
+  await sendText(from, "Randevu oluşturmak istediğiniz müşterinin adı soyadı nedir?");
+}
+
+async function randevuDefteriManuelTelefonSor(from, session) {
+  session.state = "DANISMAN_RANDEVU_DEFTERI_MANUEL_TELEFON";
+  await sendText(from, "Müşterinin telefon numarası nedir? (Örn: 0532 123 45 67)");
 }
 
 async function randevuDefteriRandevuTamamla(from, session) {
@@ -3026,6 +3244,25 @@ async function handleAdvisorMessage(from, parsed) {
       return;
     }
 
+    // 01.08.2026 eklendi (Yenileme Takibi - toplu Excel yukleme): AYNI mime
+    // kontrolu (RANDEVU_DEFTERI_EXCEL_MIME_TURLERI genel bir "bu bir Excel
+    // dosyasi mi" kontrolu, isme ragmen Randevu Defterim'e ozel degil).
+    if (session.state === "DANISMAN_YENILEME_EXCEL_BEKLE") {
+      if (!RANDEVU_DEFTERI_EXCEL_MIME_TURLERI.includes((parsed.mimeType || "").toLowerCase())) {
+        await sendText(from, "Bu bir Excel dosyası (.xlsx/.xls) gibi görünmüyor 🙏 Lütfen Excel formatında gönderir misiniz?");
+        return;
+      }
+      try {
+        const { buffer } = await mediaIndir(parsed.mediaId);
+        await sendText(from, "Üretim dosyanızı işliyorum, bir saniye... 🔍");
+        await yenilemeExcelIsle(from, session, buffer, parsed.dosyaAdi);
+      } catch (err) {
+        console.error("Yenileme uretim excel indirilemedi/islenemedi:", err?.response?.data || err.message);
+        await sendText(from, "Dosyayı işlerken bir sorun oluştu 🙏 Lütfen tekrar gönderir misiniz?");
+      }
+      return;
+    }
+
     // Satis kaydi akisinda, en az bir "tekli_foto_belge" tipi soru
     // bekleniyorsa (KVKK metni, imza karti, yerlesim yeri belgesi, kimlik on/
     // arka yuz - sigortalidan ve/veya sigorta ettirenden) belge fotografini
@@ -3351,7 +3588,7 @@ async function handleAdvisorMessage(from, parsed) {
         return;
       }
       if (userText === "Yenileme Takibi Ekle") {
-        await yenilemeBaslat(from, session);
+        await yenilemeEklemeMenuGoster(from, session);
         return;
       }
       // 31.07.2026 eklendi: ilk surumde placeholder'di ("yakında burada
@@ -3919,6 +4156,28 @@ async function handleAdvisorMessage(from, parsed) {
     }
 
     // --- Yenileme ekleme akisi ---
+    case "DANISMAN_YENILEME_EKLEME_MENU": {
+      const secim = matchOption(userText, YENILEME_EKLEME_MENU_SECENEKLERI);
+      if (secim === "Excel ile Toplu Yükle") {
+        await yenilemeExcelYuklemeBaslat(from, session);
+        return;
+      }
+      if (secim === "Tek Tek Ekle") {
+        await yenilemeBaslat(from, session);
+        return;
+      }
+      await yenilemeEklemeMenuGoster(from, session);
+      return;
+    }
+
+    case "DANISMAN_YENILEME_EXCEL_BEKLE": {
+      // Bu state'te sadece belge/dosya bekleniyor (bkz. handleAdvisorMessage
+      // basindaki media isleme blogu) - metin geldiyse kullaniciyi tekrar
+      // dosya gondermeye yonlendiriyoruz.
+      await sendText(from, "Devam etmek için lütfen üretim takip Excel dosyanızı (.xlsx/.xls) belge olarak gönderir misiniz? 📎");
+      return;
+    }
+
     case "DANISMAN_YENILEME_MUSTERI_BEKLE": {
       if (!userText) {
         await sendText(from, "Sigortalının adını ve soyadını paylaşır mısınız?");
@@ -4043,19 +4302,23 @@ async function handleAdvisorMessage(from, parsed) {
     // --- Randevu Defterim (31.07.2026 eklendi) ---
     case "DANISMAN_RANDEVU_DEFTERI_MENU": {
       const secim = matchOption(userText, RANDEVU_DEFTERI_MENU_SECENEKLERI) || userText;
-      if (secim === "Excel Yükle") {
-        await randevuDefteriExcelYuklemeBaslat(from, session);
-        return;
-      }
       if (secim === "Müşteri Ara") {
         await randevuDefteriMusteriAra(from, session);
+        return;
+      }
+      if (secim === "Randevu Oluştur") {
+        await randevuDefteriManuelBaslat(from, session);
         return;
       }
       if (secim === "Kayıtlarım") {
         await randevuDefteriIstatistikGoster(from, session);
         return;
       }
-      if (secim === "Ana Menü") {
+      if (secim === "Referans Yükle") {
+        await randevuDefteriExcelYuklemeBaslat(from, session);
+        return;
+      }
+      if (secim === "Ana Menüye Dön") {
         await karsilamaGoster(from, session);
         return;
       }
@@ -4079,7 +4342,7 @@ async function handleAdvisorMessage(from, parsed) {
         return;
       }
       if (secim === "Olumlu") {
-        await randevuDefteriRandevuTarihSor(from, session);
+        await randevuDefteriRandevuGunSor(from, session);
         return;
       }
       if (secim === "Olumsuz") {
@@ -4111,18 +4374,97 @@ async function handleAdvisorMessage(from, parsed) {
       return;
     }
 
-    case "DANISMAN_RANDEVU_DEFTERI_RANDEVU_TARIH": {
-      const zamanMs = tarihSaatDogrula(userText);
-      if (!zamanMs) {
-        await sendText(from, "Lütfen GG.AA.YYYY SS:DD formatında yazar mısınız? (Örn: 10.08.2026 14:30)");
+    case "DANISMAN_RANDEVU_DEFTERI_MANUEL_AD": {
+      if (!bosDegilMi(userText)) {
+        await sendText(from, "Müşterinin adı soyadını yazar mısınız?");
         return;
       }
-      if (zamanMs < Date.now()) {
-        await sendText(from, "Bu tarih geçmişte kalmış görünüyor, lütfen ileri bir tarih/saat yazar mısınız?");
+      session.randevuDefteriGecici.manuelAd = userText.trim();
+      await randevuDefteriManuelTelefonSor(from, session);
+      return;
+    }
+
+    case "DANISMAN_RANDEVU_DEFTERI_MANUEL_TELEFON": {
+      const danisman = danismaniBul(from);
+      const sonuc = randevuDefteriStore.manuelKayitOlustur(
+        from,
+        danisman ? danisman.name : null,
+        session.randevuDefteriGecici.manuelAd,
+        userText
+      );
+      if (sonuc.hata) {
+        await sendText(from, `❌ ${sonuc.hata} Lütfen tekrar yazar mısınız?`);
+        return;
+      }
+      session.randevuDefteriSeciliId = sonuc.kayit.id;
+      await randevuDefteriRandevuGunSor(from, session);
+      return;
+    }
+
+    case "DANISMAN_RANDEVU_DEFTERI_RANDEVU_GUN": {
+      const kisaSecenekler = aramaTarihiKisaSecenekleri();
+      const options = aramaTarihiSecenekleri();
+      const kisaEslesen = matchOption(userText, kisaSecenekler);
+      if (!kisaEslesen) {
+        await sendList(from, "Lütfen listeden bir gün seçer misiniz?", "Seçin", kisaSecenekler);
+        return;
+      }
+      session.randevuDefteriGecici.tarihStr = options[kisaSecenekler.indexOf(kisaEslesen)];
+      await randevuDefteriRandevuSaatSor(from, session);
+      return;
+    }
+
+    // 01.08.2026 DUZELTILDI: bu case artik dogrudan "09:30".."18:00" arasi
+    // yarim saatlik bir SAAT bekliyor (arama randevusundaki gibi bir ARALIK
+    // degil) - bkz. tumRandevuSaatleri/randevuDefteriRandevuSaatSor.
+    // matchOption TUM 18 olasi saate karsi calisiyor (danismana o an hangi
+    // alt-liste - Sabah/Öğleden Sonra/tam liste - gosterilmis olursa olsun
+    // saglam kalsin diye), gecerlilik yine de secili GUN icin uygun saatler
+    // (bugunse +2 saat kurali) tarihSaatDogrula + gecmis-tarih kontroluyle
+    // saglaniyor.
+    case "DANISMAN_RANDEVU_DEFTERI_RANDEVU_SAAT": {
+      const tumOlasi = tumRandevuSaatleri();
+      const secilen = matchOption(userText, tumOlasi);
+      if (!secilen) {
+        await sendText(from, "Lütfen listeden bir saat seçer misiniz?");
+        return;
+      }
+      const zamanMs = tarihSaatDogrula(`${session.randevuDefteriGecici.tarihStr} ${secilen}`);
+      if (!zamanMs || zamanMs < Date.now()) {
+        // Guvenlik agi: secenekler normalde zaten gecmisi filtreliyor (bkz.
+        // randevuSaatSecenekleri), ama olur da saat kaymasi gibi bir durumda
+        // gecmis bir saat secilmisse danismani tikanmis birakmamak icin
+        // listeyi tekrar gosteriyoruz.
+        await sendText(from, "Bu saat artık geçmişte kalmış görünüyor, lütfen başka bir saat seçer misiniz?");
+        await randevuDefteriRandevuSaatSor(from, session);
         return;
       }
       session.randevuDefteriGecici.zamanMs = zamanMs;
       await randevuDefteriRandevuYerSor(from, session);
+      return;
+    }
+
+    // 01.08.2026 eklendi: WhatsApp'in 10 satirlik liste sinirindan dolayi
+    // >10 uygun saat oldugunda once Sabah/Öğleden Sonra soruluyor (bkz.
+    // randevuDefteriRandevuSaatSor) - bu case o secimi cozup daralmis
+    // (<=9 satirlik) saat listesini gosterir.
+    case "DANISMAN_RANDEVU_DEFTERI_RANDEVU_YARIM_GUN": {
+      const secim = matchOption(userText, RANDEVU_YARIM_GUN_SECENEKLERI);
+      if (!secim) {
+        await sendButtons(from, "Lütfen sabah mı öğleden sonra mı uygun olduğunu seçer misiniz?", RANDEVU_YARIM_GUN_SECENEKLERI);
+        return;
+      }
+      const saatler = randevuYarimGunSaatleri(session.randevuDefteriGecici.tarihStr, secim);
+      if (saatler.length === 0) {
+        // Guvenlik agi: teorik olarak saat kaymasi gibi bir durumda secilen
+        // yarida hic uygun saat kalmamis olabilir - danismani tikanmis
+        // birakmamak icin diger yariyi denemesini istiyoruz.
+        await sendText(from, "Bu aralıkta uygun saat kalmadı, lütfen diğerini seçer misiniz?");
+        await sendButtons(from, "Randevu için sabah mı, öğleden sonra mı uygun?", RANDEVU_YARIM_GUN_SECENEKLERI);
+        return;
+      }
+      session.state = "DANISMAN_RANDEVU_DEFTERI_RANDEVU_SAAT";
+      await sendList(from, "Hangi saat uygun?", "Seçin", saatler);
       return;
     }
 
@@ -4144,6 +4486,19 @@ async function handleAdvisorMessage(from, parsed) {
       }
       if (zamanMs < Date.now()) {
         await sendText(from, "Bu tarih geçmişte kalmış görünüyor, lütfen ileri bir tarih/saat yazar mısınız?");
+        return;
+      }
+      // 01.08.2026 eklendi: "resmi tatillerin hiçbirinde çalışmıyoruz ...
+      // resmi tatillere arama talebi de oluşturmuyoruz" - tekrar arama hala
+      // serbest metin oldugu icin (gun secim listesi degil), gun secim
+      // listesindeki gibi otomatik hariç tutma yapilamiyor, bunun yerine
+      // secilen tarih resmi tatile denk geliyorsa hangi tatil oldugu
+      // belirtilerek reddediliyor.
+      const tatilAdi = resmiTatiller.tatilAdiGetir(
+        turkiyeSaatiniFormatla(zamanMs, { day: "2-digit", month: "2-digit", year: "numeric" })
+      );
+      if (tatilAdi) {
+        await sendText(from, `${tatilAdi} nedeniyle o gün çalışmıyoruz 🙏 Lütfen başka bir tarih/saat yazar mısınız?`);
         return;
       }
       session.randevuDefteriGecici.zamanMs = zamanMs;

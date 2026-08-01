@@ -25,6 +25,8 @@ const engelliNumaralarStore = require("./engelliNumaralarStore");
 const dokumanStore = require("./dokumanStore");
 // 31.07.2026 eklendi (Randevu Defterim ozelligi).
 const randevuDefteriStore = require("./randevuDefteriStore");
+// 01.08.2026 eklendi: "resmi tatillerde günaydın mesajımız da yok" kurali icin.
+const resmiTatiller = require("./resmiTatiller");
 const flows = require("./flows");
 const db = require("./db");
 const sessionStore = require("./sessionStore");
@@ -1531,23 +1533,30 @@ function acikIsSatiriOlustur(lead) {
 // Enbel'e giden UC mesaj da BIRBIRIYLE AYNI acilisi kullanir (tutarli), 2)
 // gunden gune sirayla degisir (10 gunde bir dongu tekrar eder), 3) test/deploy
 // sirasinda ayni gun icin hep ayni sonuc cikar (rastgelelik yok).
+// 01.08.2026 DUZELTILDI: kullanicinin talebi uzerine artik isimsiz/genel bir
+// "Günaydın!" degil, kisiye ozel "Günaydın Enbel Bey!"/"Günaydın Seda Hanım!"
+// hitabi kullaniliyor - {isim} yer tutucusu, gunlukGunaydinMesajiSec
+// tarafindan cagiranin verdigi hitapli isimle (bkz. flows.js'teki
+// danismanHitapliIsim - isim + cinsiyete gore Bey/Hanım) degistiriliyor.
+// Hitap haritasinda olmayan bir isim icin danismanHitapliIsim sadece ismi
+// (hitapsiz) dondurur, hata firlatmaz.
 const GUNAYDIN_MESAJLARI = [
-  "☀️ Günaydın! Yeni bir gün, yeni fırsatlar demek.",
-  "🌅 Günaydın! Bugün de harika işler çıkaracağınıza inanıyoruz.",
-  "🌞 Günaydın! Enerjiniz bol, gününüz bereketli olsun.",
-  "✨ Günaydın! Küçük adımlar büyük başarılara götürür, bugün de bir adım daha atalım.",
-  "🌻 Günaydın! Güzel bir gün sizi bekliyor, dolu dolu geçirin.",
-  "💪 Günaydın! Bugün de ekip olarak harika işler çıkaracağız.",
-  "🌈 Günaydın! Gülümseyerek başlayan gün, güzel biter.",
-  "🚀 Günaydın! Hedeflerimize bir gün daha yaklaşıyoruz.",
-  "🍀 Günaydın! Bugün şansınız ve emeğiniz bol olsun.",
-  "🌸 Günaydın! Yeni gün, yeni bir başarı hikayesi yazmak için hazırız."
+  "☀️ Günaydın {isim}! Yeni bir gün, yeni fırsatlar demek.",
+  "🌅 Günaydın {isim}! Bugün de harika işler çıkaracağınıza inanıyoruz.",
+  "🌞 Günaydın {isim}! Enerjiniz bol, gününüz bereketli olsun.",
+  "✨ Günaydın {isim}! Küçük adımlar büyük başarılara götürür, bugün de bir adım daha atalım.",
+  "🌻 Günaydın {isim}! Güzel bir gün sizi bekliyor, dolu dolu geçirin.",
+  "💪 Günaydın {isim}! Bugün de ekip olarak harika işler çıkaracağız.",
+  "🌈 Günaydın {isim}! Gülümseyerek başlayan gün, güzel biter.",
+  "🚀 Günaydın {isim}! Hedeflerimize bir gün daha yaklaşıyoruz.",
+  "🍀 Günaydın {isim}! Bugün şansınız ve emeğiniz bol olsun.",
+  "🌸 Günaydın {isim}! Yeni gün, yeni bir başarı hikayesi yazmak için hazırız."
 ];
 
-function gunlukGunaydinMesajiSec(gunAnahtari) {
+function gunlukGunaydinMesajiSec(gunAnahtari, hitapliIsim) {
   const [yil, ay, gun] = gunAnahtari.split("-").map(Number);
   const gunSayisi = Math.floor(Date.UTC(yil, ay - 1, gun) / (24 * 60 * 60 * 1000));
-  return GUNAYDIN_MESAJLARI[gunSayisi % GUNAYDIN_MESAJLARI.length];
+  return GUNAYDIN_MESAJLARI[gunSayisi % GUNAYDIN_MESAJLARI.length].replace("{isim}", hitapliIsim);
 }
 
 // 27.07.2026 eklendi: o gun bekleyen (Açık) bir isi OLMAYAN danismanlara da
@@ -1624,8 +1633,16 @@ async function gunlukBekleyenIsOzetiKontrolEt() {
   if (gunlukOzetGonderilenGun === gunAnahtari) return;
   gunlukOzetGonderilenGun = gunAnahtari; // ilk once isaretle - gonderim sirasinda bir hata olsa bile ayni dakika icinde tekrar tekrar denenmesin
 
+  // 01.08.2026 eklendi: kullanicinin talebi uzerine - "resmi tatillerde
+  // günaydın mesajımız da yok". gunAnahtari zaten "YYYY-MM-DD" formatinda
+  // oldugu icin resmiTatiller'in bu formati bekleyen yardimcisi kullaniliyor.
+  const bugununTatilAdi = resmiTatiller.tatilAdiGetirYyyyAaGg(gunAnahtari);
+  if (bugununTatilAdi) {
+    console.log(`Gunluk ozet atlandi (${bugununTatilAdi} - resmi tatil): ${gunAnahtari}`);
+    return;
+  }
+
   const acikLeadler = leadStore.tumLeadleriGetir().filter((l) => l.durum === "Açık");
-  const gunaydinMesaji = gunlukGunaydinMesajiSec(gunAnahtari);
   const elementerAcikIsler = acikLeadler.filter((l) => urunElementerMi(l.urun));
 
   const bahadir = PANEL_KULLANICILARI.find((k) => k.kullaniciAdi === "bahadireksi");
@@ -1634,6 +1651,7 @@ async function gunlukBekleyenIsOzetiKontrolEt() {
 
   for (const danisman of tumDanismanlar) {
     const kisiselIsler = acikLeadler.filter((l) => l.danismanNumarasi === danisman.number);
+    const gunaydinMesaji = gunlukGunaydinMesajiSec(gunAnahtari, flows.danismanHitapliIsim(danisman.name));
 
     let mesaj;
     let logEtiketi;
