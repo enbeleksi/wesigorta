@@ -460,23 +460,38 @@ app.get("/api/panel/guvenlik-kodu-sablonu-olustur", panelAuth, async (req, res) 
 // satir/markdown KABUL ETMIYOR - sadece duz metin. Bu yuzden HEADER'dan emoji
 // cikarildi, sadece "Günlük Özet" birakildi (emoji'ler zaten BODY icindeki
 // {{detay}} parametresinin - yani gunaydin mesajinin - icinde bolca var).
+//
+// NOT (01.08.2026, v1 SONUCU): "gunluk_bekleyen_is_ozeti_v1" gonderildi ama
+// REJECTED dondu - kategori otomatik MARKETING'e cevrildi VE rejected_reason
+// "INVALID_FORMAT" cikti (bkz. /api/panel/sablon-detay/:id). Arastirinca
+// gercek sebep bulundu: BODY metni SADECE "{{detay}}" idi - yani degisken,
+// mesajin HEM basi HEM sonuydu, hic sabit (statik) metin icermiyordu. Meta,
+// bir degiskenin mesajin basinda veya sonunda TEK BASINA durmasini INVALID_FORMAT
+// olarak reddediyor (degiskenin etrafinda en az bir miktar sabit metin
+// olmasi gerekiyor). Zaten onayli olan AGENT_DETAY_TEMPLATE_NAME ("yeni_talep_detay")
+// de tek degiskenli ama BODY'sinde degiskenin etrafinda sabit metin var - bu
+// yuzden o sorunsuz onaylanmisti, bizimki degildi. v2'de duzeltildi: {{detay}}
+// artik sabit bir on-ek (📋) ve sabit bir alt bilgi cumlesiyle sarmalanmis
+// durumda - boylece degisken ne basta ne sonda tek basina kalmiyor. Ayrica
+// ornek metindeki cift yeni satirlar (\n\n) tek satira indirildi (bazi
+// kaynaklara gore bu da bicim ihlali sayilabiliyor).
 app.get("/api/panel/gunluk-ozet-sablonu-olustur", panelAuth, async (req, res) => {
   try {
     const sonuc = await sablonOlustur({
-      name: "gunluk_bekleyen_is_ozeti_v1",
+      name: "gunluk_bekleyen_is_ozeti_v2",
       language: "tr",
       category: "UTILITY",
       components: [
         { type: "HEADER", format: "TEXT", text: "Günlük Özet" },
         {
           type: "BODY",
-          text: "{{detay}}",
+          text: "📋 {{detay}}\n\n_Bu mesaj WE Sigorta paneli tarafından otomatik gönderilmiştir._",
           example: {
             body_text_named_params: [
               {
                 param_name: "detay",
                 example:
-                  "Günaydın! Bugün bekleyen işleriniz:\n\n• Ahmet Yılmaz - Kasko Sigortası - 2 gündür açık\n\nAçık talepleriniz aşağıda, detay görmek istediğinizi seçin:"
+                  "Günaydın! Bugün bekleyen işleriniz:\nAhmet Yılmaz - Kasko Sigortası - 2 gündür açık\nAçık talepleriniz aşağıda, detay görmek istediğinizi seçin:"
               }
             ]
           }
