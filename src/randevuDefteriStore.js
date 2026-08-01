@@ -262,11 +262,12 @@ function kayitGetir(id) {
   return kayitlar.get(id) || null;
 }
 
-// "Musteri Ara" butonu icin: oncelik SIRASI onemli -
+// "Referans Ara" butonu icin (eski adi "Musteri Ara" idi, 01.08.2026'da
+// yeniden adlandirildi): oncelik SIRASI onemli -
 // 1) zamani gelmis (tekrarArama.zamanMs <= simdi) "yeniden_aranacak"/
 //    "ulasilamadi" kayitlar (bu musteriler zaten bir kez aranmis, geri
 //    donus zamanlari gelmis - reminders sadece bir "hatirlatma" mesaji
-//    gonderir, session'i ZORLA degistirmez; danisman "Müşteri Ara" dedigi
+//    gonderir, session'i ZORLA degistirmez; danisman "Referans Ara" dedigi
 //    an bunlarin onune gecmesi gerekir, aksi halde bu kayitlara asla
 //    donulmeyip sonsuza kadar beklemede kalabilirler).
 // 2) hic aranmamis (durum === null) kayitlar.

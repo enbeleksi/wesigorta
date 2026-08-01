@@ -265,7 +265,17 @@ function varsayilanDanisman() {
 // hucreleri dogrudan JS Date nesnesi olarak geliyor (metin/sayi olarak
 // gelen istisnai hucreler icin tarihiCikar ayrica fallback saglıyor).
 function uretimExcelSatirlariniOku(buffer) {
-  const workbook = XLSX.read(buffer, { type: "buffer", cellDates: true });
+  let workbook;
+  try {
+    workbook = XLSX.read(buffer, { type: "buffer", cellDates: true });
+  } catch (err) {
+    console.error("Uretim excel dosyasi okunamadi (bozuk/gecersiz dosya):", err.message);
+    return {
+      hata:
+        "Dosyayı bir Excel dosyası olarak okuyamadım 😕 Dosya bozuk olabilir ya da beklenmeyen bir formatta olabilir. " +
+        "Lütfen dosyayı tekrar (mümkünse .xlsx olarak) gönderir misiniz?"
+    };
+  }
   const ilkSayfaAdi = workbook.SheetNames[0];
   if (!ilkSayfaAdi) return { hata: "Dosyada okunabilir bir sayfa bulunamadı." };
   const sayfa = workbook.Sheets[ilkSayfaAdi];

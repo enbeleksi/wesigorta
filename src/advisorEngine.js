@@ -25,6 +25,16 @@ const RANDEVU_DEFTERI_EXCEL_MIME_TURLERI = [
   "application/vnd.ms-excel",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 ];
+// 01.08.2026 eklendi: WhatsApp Business API bazi cihaz/uygulamalardan gelen
+// .xlsx/.xls dosyalari icin beklenmedik/hatali mime type (orn.
+// "application/octet-stream") bildirebiliyor - bu da yukarida ki katı mime
+// kontrollerinde dosyanin SESSIZCE reddedilmesine yol aciyordu (Bahadir'in
+// yukledigi uretim dosyasi ornegindeki gibi). Bu yuzden, Excel dosyasi
+// beklenen state'lerde, mime type uyusmasa bile dosya adi .xlsx/.xls ile
+// bitiyorsa dosyayi KABUL ediyoruz (uzanti tabanli yedek kontrol).
+function dosyaAdiExcelUzantiliMi(dosyaAdi) {
+  return /\.(xlsx|xls)$/i.test(dosyaAdi || "");
+}
 const { garantiEmekliligeGonder } = require("./eposta");
 const {
   tcKimlikGecerliMi,
@@ -1174,7 +1184,7 @@ const KAPANIS_IFADE_REGEX = /^(cok\s+)?(tesekkur(ler)?(\s+ederim)?|sagol|saol|el
 // randevu SADECE Excel'den cekilip aranan bir musteriyle degil, dogrudan bu
 // menuden manuel ad/telefon girilerek de olusturulabiliyor (bkz.
 // randevuDefteriManuelBaslat).
-const RANDEVU_DEFTERI_MENU_SECENEKLERI = ["Müşteri Ara", "Randevu Oluştur", "Kayıtlarım", "Referans Yükle", "Ana Menüye Dön"];
+const RANDEVU_DEFTERI_MENU_SECENEKLERI = ["Referans Ara", "Randevu Oluştur", "Kayıtlarım", "Referans Yükle", "Ana Menüye Dön"];
 const RANDEVU_DEFTERI_DURUM_SECENEKLERI = [
   "Olumlu",
   "Olumsuz",
@@ -2461,7 +2471,19 @@ async function satistanIptalTalebiOlustur(from, analiz, orijinalBuffer, orijinal
 // yenilemeExcelYuklemeBaslat/yenilemeExcelIsle.
 const YENILEME_EKLEME_MENU_SECENEKLERI = ["Tek Tek Ekle", "Excel ile Toplu Yükle"];
 
+// 01.08.2026 eklendi: "excel ile yenileme takibini enbel ve bahadır
+// eklebilsin sadece şimdilik" talebi uzerine - toplu Excel yukleme ozelligi
+// simdilik SADECE yonetici numaralarina (Enbel, Bahadır) aciliyor. Diger
+// danismanlar yenileme kaydini hala "Tek Tek Ekle" ile girebilir.
+function yenilemeExcelYuklemeYetkisiVarMi(from) {
+  return YONETICI_NUMARALARI.includes(from);
+}
+
 async function yenilemeEklemeMenuGoster(from, session) {
+  if (!yenilemeExcelYuklemeYetkisiVarMi(from)) {
+    await yenilemeBaslat(from, session);
+    return;
+  }
   session.state = "DANISMAN_YENILEME_EKLEME_MENU";
   await sendButtons(
     from,
@@ -2483,6 +2505,12 @@ async function yenilemeBaslat(from, session) {
 // yani bu dosyayi kim yuklerse yuklesin sonuc ayni (butun danismanlarin
 // kayitlarini iceren TEK bir dosya, hepsi dogru kisiye atanarak isleniyor).
 async function yenilemeExcelYuklemeBaslat(from, session) {
+  if (!yenilemeExcelYuklemeYetkisiVarMi(from)) {
+    // savunma amacli ikinci kontrol - normal akista buraya menude secenek
+    // hic gosterilmedigi icin zaten girilmiyor.
+    await yenilemeBaslat(from, session);
+    return;
+  }
   session.state = "DANISMAN_YENILEME_EXCEL_BEKLE";
   await sendText(
     from,
@@ -2498,12 +2526,22 @@ async function yenilemeExcelYuklemeBaslat(from, session) {
 const YENILEME_EXCEL_ATLANAN_MAX_GOSTER = 8;
 
 async function yenilemeExcelIsle(from, session, buffer, dosyaAdi) {
+  console.log("Yenileme uretim excel isleniyor:", dosyaAdi, "buffer boyutu:", buffer ? buffer.length : 0);
   const sonuc = yenilemeStore.uretimExceliYukle(buffer, dosyaAdi);
 
   if (sonuc.hata) {
+    console.log("Yenileme uretim excel islenemedi (mantiksal hata):", sonuc.hata);
     await sendText(from, `❌ ${sonuc.hata}`);
     return; // ayni state'te kaliyoruz, danisman duzeltilmis dosyayi tekrar gonderebilir
   }
+
+  console.log(
+    "Yenileme uretim excel islendi:",
+    "toplamSatir=", sonuc.toplamSatir,
+    "eklenen=", sonuc.eklenen.length,
+    "guncellenen=", sonuc.guncellenen.length,
+    "atlanan=", sonuc.atlanan.length
+  );
 
   // 01.08.2026 DUZELTILDI: artik ARACI ismi eslesmeyen kayitlar atanmadan
   // kalmiyor (bkz. yenilemeStore.js'teki varsayilanDanisman) - bunun yerine
@@ -2664,7 +2702,7 @@ async function besFonListesiGoster(from, session) {
 // --- Randevu Defterim (31.07.2026 eklendi) ---
 // Is mantiginin tamami randevuDefteriStore.js'te; burada sadece WhatsApp
 // menu/soru akisi var. Akis: Excel Yükle (dosya -> kayit listesi olusur) /
-// Müşteri Ara (listeden rastgele biri gelir) -> Olumlu/Olumsuz/Yeniden
+// Referans Ara (listeden rastgele biri gelir) -> Olumlu/Olumsuz/Yeniden
 // Aranacak/Ulaşılamadı/Yanlış Numara sonucu -> ilgiliyse ek sorular (randevu
 // tarih+saat/yer ya da tekrar arama tarih+saat) -> kayit guncellenir,
 // hatirlatma kurulur (bkz. server.js'deki randevuDefteriHatirlatmalariniKontrolEt).
@@ -2823,7 +2861,7 @@ async function randevuDefteriYanlisNumaraTamamla(from, session) {
 // formatinda (bkz. asagidaki randevuDefteriTekrarTarihSor) - kullanicinin
 // talebi sadece randevu gunu/saati icindi.
 //
-// Bu fonksiyon HEM "Müşteri Ara" -> "Olumlu" akisindan (mevcut bir kayit
+// Bu fonksiyon HEM "Referans Ara" -> "Olumlu" akisindan (mevcut bir kayit
 // zaten session.randevuDefteriSeciliId'de secili) HEM DE "Randevu Oluştur"
 // menusunden (randevuDefteriManuelTelefonAl basarili oldugunda, YENI
 // olusturulan kaydin id'si session.randevuDefteriSeciliId'ye atanmis olarak)
@@ -2872,7 +2910,7 @@ async function randevuDefteriRandevuYerSor(from, session) {
 // girer, danisman tum randevu akisini bosuna doldurmaz. Kayit olusturulur
 // olusturulmaz session.randevuDefteriSeciliId bu yeni kaydin id'sine
 // atanir - boylece devamindaki gun/saat/yer adimlari ve
-// randevuDefteriRandevuTamamla, "Müşteri Ara" akisindan hicbir farki
+// randevuDefteriRandevuTamamla, "Referans Ara" akisindan hicbir farki
 // olmadan ayni sekilde calisir.
 async function randevuDefteriManuelBaslat(from, session) {
   session.state = "DANISMAN_RANDEVU_DEFTERI_MANUEL_AD";
@@ -3215,7 +3253,16 @@ async function handleAdvisorMessage(from, parsed) {
   // detayini goruntuluyorsa, dogrudan o talebe eklenir. Aksi halde nazikce
   // uyarilir. Guvenlik icin sadece PDF/Word/Excel/fotograf turleri kabul edilir.
   if (parsed.type === "media") {
-    if (!dosyaTuruIzinliMi(parsed.mimeType)) {
+    const excelBekleniyorMu =
+      session.state === "DANISMAN_RANDEVU_DEFTERI_EXCEL_BEKLE" || session.state === "DANISMAN_YENILEME_EXCEL_BEKLE";
+    const dosyaAdiExcelUzantili = dosyaAdiExcelUzantiliMi(parsed.dosyaAdi);
+    if (!dosyaTuruIzinliMi(parsed.mimeType) && !(excelBekleniyorMu && dosyaAdiExcelUzantili)) {
+      console.log(
+        "Dosya turu reddedildi (genel kontrol):",
+        "mimeType=", parsed.mimeType,
+        "dosyaAdi=", parsed.dosyaAdi,
+        "state=", session.state
+      );
       await sendText(
         from,
         "Bu dosya türünü kabul edemiyoruz 🙏 Sadece PDF, Word, Excel veya fotoğraf (jpg/png) gönderebilirsiniz."
@@ -3229,11 +3276,17 @@ async function handleAdvisorMessage(from, parsed) {
     // ayrica kontrol edip isliyoruz - digger tum durum/akislardan ONCE,
     // cunku bu state'te baska hicbir belge islemi anlamli degil.
     if (session.state === "DANISMAN_RANDEVU_DEFTERI_EXCEL_BEKLE") {
-      if (!RANDEVU_DEFTERI_EXCEL_MIME_TURLERI.includes((parsed.mimeType || "").toLowerCase())) {
+      if (!RANDEVU_DEFTERI_EXCEL_MIME_TURLERI.includes((parsed.mimeType || "").toLowerCase()) && !dosyaAdiExcelUzantili) {
+        console.log(
+          "Excel mime kontrolu basarisiz (randevu defteri):",
+          "mimeType=", parsed.mimeType,
+          "dosyaAdi=", parsed.dosyaAdi
+        );
         await sendText(from, "Bu bir Excel dosyası (.xlsx/.xls) gibi görünmüyor 🙏 Lütfen Excel formatında gönderir misiniz?");
         return;
       }
       try {
+        console.log("Randevu defteri excel dosyasi kabul edildi, indiriliyor:", parsed.dosyaAdi, parsed.mimeType);
         const { buffer } = await mediaIndir(parsed.mediaId);
         await sendText(from, "Excel dosyanızı işliyorum, bir saniye... 🔍");
         await randevuDefteriExcelIsle(from, session, buffer, parsed.dosyaAdi);
@@ -3248,11 +3301,17 @@ async function handleAdvisorMessage(from, parsed) {
     // kontrolu (RANDEVU_DEFTERI_EXCEL_MIME_TURLERI genel bir "bu bir Excel
     // dosyasi mi" kontrolu, isme ragmen Randevu Defterim'e ozel degil).
     if (session.state === "DANISMAN_YENILEME_EXCEL_BEKLE") {
-      if (!RANDEVU_DEFTERI_EXCEL_MIME_TURLERI.includes((parsed.mimeType || "").toLowerCase())) {
+      if (!RANDEVU_DEFTERI_EXCEL_MIME_TURLERI.includes((parsed.mimeType || "").toLowerCase()) && !dosyaAdiExcelUzantili) {
+        console.log(
+          "Excel mime kontrolu basarisiz (yenileme):",
+          "mimeType=", parsed.mimeType,
+          "dosyaAdi=", parsed.dosyaAdi
+        );
         await sendText(from, "Bu bir Excel dosyası (.xlsx/.xls) gibi görünmüyor 🙏 Lütfen Excel formatında gönderir misiniz?");
         return;
       }
       try {
+        console.log("Yenileme uretim excel dosyasi kabul edildi, indiriliyor:", parsed.dosyaAdi, parsed.mimeType);
         const { buffer } = await mediaIndir(parsed.mediaId);
         await sendText(from, "Üretim dosyanızı işliyorum, bir saniye... 🔍");
         await yenilemeExcelIsle(from, session, buffer, parsed.dosyaAdi);
@@ -4159,6 +4218,10 @@ async function handleAdvisorMessage(from, parsed) {
     case "DANISMAN_YENILEME_EKLEME_MENU": {
       const secim = matchOption(userText, YENILEME_EKLEME_MENU_SECENEKLERI);
       if (secim === "Excel ile Toplu Yükle") {
+        if (!yenilemeExcelYuklemeYetkisiVarMi(from)) {
+          await yenilemeBaslat(from, session);
+          return;
+        }
         await yenilemeExcelYuklemeBaslat(from, session);
         return;
       }
@@ -4302,7 +4365,7 @@ async function handleAdvisorMessage(from, parsed) {
     // --- Randevu Defterim (31.07.2026 eklendi) ---
     case "DANISMAN_RANDEVU_DEFTERI_MENU": {
       const secim = matchOption(userText, RANDEVU_DEFTERI_MENU_SECENEKLERI) || userText;
-      if (secim === "Müşteri Ara") {
+      if (secim === "Referans Ara") {
         await randevuDefteriMusteriAra(from, session);
         return;
       }

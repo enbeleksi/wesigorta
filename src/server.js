@@ -1342,7 +1342,7 @@ async function hatirlatmalariKontrolEt() {
 // alindi) olarak isaretlenen musteriler icin kurulan randevu hatirlaticilari.
 // ONEMLI: hatirlatmalariKontrolEt'teki AYNI ilke - bu fonksiyon SADECE bir
 // bildirim mesaji gonderir, danismanin session/state'ine ASLA dokunmaz (o an
-// baska bir akisin ortasinda olabilir) - danisman "Müşteri Ara" dedigi an
+// baska bir akisin ortasinda olabilir) - danisman "Referans Ara" dedigi an
 // zaten zamani gelmis olanlar oncelikli olarak karsisina cikiyor (bkz.
 // randevuDefteriStore.rastgeleMusteriGetir).
 async function randevuDefteriHatirlatmalariniKontrolEt() {
@@ -1352,7 +1352,7 @@ async function randevuDefteriHatirlatmalariniKontrolEt() {
       `⏰ Hatırlatma! Tekrar arama zamanı geldi.\n\n` +
       `Müşteri: ${kayit.adSoyad}\n` +
       `Telefon: ${kayit.telefon}\n\n` +
-      `"Randevu Defterim" > "Müşteri Ara" ile bu müşteriyi tekrar arayabilirsiniz.`;
+      `"Randevu Defterim" > "Referans Ara" ile bu müşteriyi tekrar arayabilirsiniz.`;
     try {
       await randevuDefteriHatirlatmaGonder(kayit.danismanNumarasi, mesaj);
       console.log("Randevu defteri tekrar arama hatirlatmasi gonderildi:", kayit.id, kayit.danismanNumarasi);
