@@ -1,5 +1,5 @@
 const { getSession, resetSession } = require("./sessionStore");
-const { sendText, sendButtons, sendList, sendTemplate, mediaIndir } = require("./loggedWhatsapp");
+const { sendText, sendButtons, sendList, sendTemplate, sendTemplatePozisyonel, mediaIndir } = require("./loggedWhatsapp");
 const { ruhsatFotografiAnalizEt } = require("./ruhsatAnaliz");
 const { proformaAnalizEt } = require("./proformaAnaliz");
 const { garantiEmekliligeGonder } = require("./eposta");
@@ -1893,11 +1893,22 @@ async function hatirlatmaGonder(numara, metin) {
 // olabilir) ESKI genel AGENT_DETAY_TEMPLATE_NAME'e (hatirlatmaGonder)
 // dusulur - boylece gecis surecinde bile guvenilirlik HIC kaybedilmez,
 // sadece baslik gecici olarak eski/yanlis kalir.
+//
+// NOT (01.08.2026): ISIMLI ({{detay}}) degiskenli v1/v2 denemeleri Meta
+// tarafindan INVALID_FORMAT ile reddedildi. Sebep, bu hesapta/API surumunde
+// (v20.0) daha once musteri_basvuru_bilgilendirme sablonunda da yasanan AYNI
+// sorun: isimli degisken formati guvenilir calismiyor (bkz. server.js'teki
+// /api/panel/musteri-bilgilendirme-sablonu-olustur yorumu, orada da v2/v3/v4
+// hep INVALID_FORMAT ile reddedilmis, "parameter_format":"NAMED" eklense
+// bile). O sablon POZISYONEL ({{1}}) formata gecince onaylanmisti - burada da
+// ayni cozum uygulandi: sendTemplate yerine sendTemplatePozisyonel kullanilir,
+// gunlukSablonAdi'nin BODY'si tek bir {{1}} degiskeni tasir (bkz.
+// /api/panel/gunluk-ozet-sablonu-olustur - v3).
 async function gunlukOzetGonder(numara, metin) {
   const gunlukSablonAdi = process.env.GUNLUK_OZET_TEMPLATE_NAME;
   if (gunlukSablonAdi) {
     try {
-      await sendTemplate(numara, gunlukSablonAdi, "tr", { detay: sablonParametresiIcinTemizle(metin) }, metin);
+      await sendTemplatePozisyonel(numara, gunlukSablonAdi, "tr", [sablonParametresiIcinTemizle(metin)], metin);
       return;
     } catch (err) {
       console.error(

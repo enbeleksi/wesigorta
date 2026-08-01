@@ -475,24 +475,35 @@ app.get("/api/panel/guvenlik-kodu-sablonu-olustur", panelAuth, async (req, res) 
 // durumda - boylece degisken ne basta ne sonda tek basina kalmiyor. Ayrica
 // ornek metindeki cift yeni satirlar (\n\n) tek satira indirildi (bazi
 // kaynaklara gore bu da bicim ihlali sayilabiliyor).
+//
+// NOT (01.08.2026, v2 SONUCU): v2 de REJECTED/INVALID_FORMAT olarak dondu -
+// AMA bu sefer kategori MARKETING'e cevrilmedi, UTILITY olarak kaldi (yani
+// "bos degisken" duzeltmesi kismen ise yaramis, sorunun geri kalani baska
+// yerde). musteri-bilgilendirme-sablonu-olustur route'undaki (asagida, ayni
+// dosyada) daha once yasanmis AYNI hatadan hatirlanan gercek sebep bulundu:
+// ISIMLI degisken formati ({{detay}} gibi) bu hesapta/API surumunde (v20.0)
+// guvenilir calismiyor - "parameter_format":"NAMED" eklense bile. O sablon
+// (musteri_basvuru_bilgilendirme_v5) POZISYONEL ({{1}}, {{2}}...) formata
+// gecince sorunsuz onaylanmisti. v3'te AYNI cozum uygulandi: {{detay}} yerine
+// POZISYONEL {{1}} kullanildi (gonderim tarafi da - conversationEngine.js
+// gunlukOzetGonder - artik sendTemplate yerine sendTemplatePozisyonel
+// kullanacak sekilde guncellendi).
 app.get("/api/panel/gunluk-ozet-sablonu-olustur", panelAuth, async (req, res) => {
   try {
     const sonuc = await sablonOlustur({
-      name: "gunluk_bekleyen_is_ozeti_v2",
+      name: "gunluk_bekleyen_is_ozeti_v3",
       language: "tr",
       category: "UTILITY",
       components: [
         { type: "HEADER", format: "TEXT", text: "Günlük Özet" },
         {
           type: "BODY",
-          text: "📋 {{detay}}\n\n_Bu mesaj WE Sigorta paneli tarafından otomatik gönderilmiştir._",
+          text: "📋 {{1}}\n\n_Bu mesaj WE Sigorta paneli tarafından otomatik gönderilmiştir._",
           example: {
-            body_text_named_params: [
-              {
-                param_name: "detay",
-                example:
-                  "Günaydın! Bugün bekleyen işleriniz:\nAhmet Yılmaz - Kasko Sigortası - 2 gündür açık\nAçık talepleriniz aşağıda, detay görmek istediğinizi seçin:"
-              }
+            body_text: [
+              [
+                "Günaydın! Bugün bekleyen işleriniz:\nAhmet Yılmaz - Kasko Sigortası - 2 gündür açık\nAçık talepleriniz aşağıda, detay görmek istediğinizi seçin:"
+              ]
             ]
           }
         }
