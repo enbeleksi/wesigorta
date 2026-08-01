@@ -17,7 +17,7 @@ const {
 } = require("./conversationEngine");
 const advisorEngine = require("./advisorEngine");
 const { sendText, sendDocument, sendTemplate, sendAuthTemplate } = require("./loggedWhatsapp");
-const { sablonOlustur, sablonDetayGetir, sablonDuzenle } = require("./whatsapp");
+const { sablonOlustur, sablonDetayGetir, sablonDuzenle, sablonlariListele } = require("./whatsapp");
 const messageLog = require("./messageLog");
 const leadStore = require("./leadStore");
 const yenilemeStore = require("./yenilemeStore");
@@ -695,6 +695,52 @@ app.get("/api/panel/sablon-detay/:id", panelAuth, async (req, res) => {
     );
   } catch (err) {
     console.error("Sablon detayi alinamadi:", err?.response?.data || err.message);
+    res.status(500).send(
+      `<pre style="font-family:monospace; padding:20px; color:#c00;">❌ Hata:\n\n${JSON.stringify(err?.response?.data || err.message, null, 2)}</pre>`
+    );
+  }
+});
+
+// --- Tani amacli: hesaba ait TUM mesaj sablonlarini (durum, kategori, red
+// sebebi dahil) tek sayfada listeler - orn. gunluk_bekleyen_is_ozeti_v1
+// sablonunun hic mi olusturulmadigini, hala PENDING mi oldugunu, yoksa
+// REJECTED mi oldugunu (ve neden) tek bakista gormek icin. Sablon adinda
+// "gunluk"/"ozet" gecenleri en ustte listeler, digerlerini altta gosterir.
+app.get("/api/panel/sablon-listesi", panelAuth, async (req, res) => {
+  try {
+    const sonuc = await sablonlariListele();
+    const tumSablonlar = sonuc.data.data || [];
+    const oncelikli = tumSablonlar.filter((s) =>
+      /gunluk|günlük|ozet|özet/i.test(s.name || "")
+    );
+    const digerleri = tumSablonlar.filter((s) => !oncelikli.includes(s));
+    const siraliListe = [...oncelikli, ...digerleri];
+    const satirYap = (s) => {
+      const renk =
+        s.status === "APPROVED" ? "#0a0" : s.status === "REJECTED" ? "#c00" : "#a60";
+      return `<tr>
+        <td>${s.id}</td>
+        <td><b>${s.name}</b></td>
+        <td>${s.language || ""}</td>
+        <td>${s.category || ""}</td>
+        <td style="color:${renk}; font-weight:bold;">${s.status}</td>
+        <td>${s.rejected_reason && s.rejected_reason !== "NONE" ? s.rejected_reason : ""}</td>
+      </tr>`;
+    };
+    res.send(`
+      <html><head><meta charset="utf-8"><title>Sablon Listesi</title></head>
+      <body style="font-family:monospace; padding:20px;">
+        <h3>Mesaj Sablonlari (${tumSablonlar.length} adet)</h3>
+        <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;">
+          <tr style="background:#eee;">
+            <th>ID</th><th>Ad</th><th>Dil</th><th>Kategori</th><th>Durum</th><th>Red Sebebi</th>
+          </tr>
+          ${siraliListe.map(satirYap).join("\n")}
+        </table>
+      </body></html>
+    `);
+  } catch (err) {
+    console.error("Sablon listesi alinamadi:", err?.response?.data || err.message);
     res.status(500).send(
       `<pre style="font-family:monospace; padding:20px; color:#c00;">❌ Hata:\n\n${JSON.stringify(err?.response?.data || err.message, null, 2)}</pre>`
     );

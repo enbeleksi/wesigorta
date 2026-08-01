@@ -273,6 +273,22 @@ async function sablonDuzenle(templateId, veri) {
   });
 }
 
+// Hesaba ait TUM mesaj sablonlarini (durum, kategori, red sebebi dahil) tek
+// seferde listeler - hangi sablonun onaylandigini, hala beklemede oldugunu
+// ya da reddedildigini (ve neden) tek bir cagriyla gormek icin. Boylece her
+// sablonu tek tek id ile sorgulamak yerine hepsini bir arada
+// karsilastirabiliyoruz (orn. gunluk ozet sablonunun durumu unutulmus mu,
+// hic mi olusturulmamis diye anlamak icin).
+async function sablonlariListele() {
+  return axios.get(
+    `https://graph.facebook.com/${API_VERSION}/${process.env.WHATSAPP_BUSINESS_ACCOUNT_ID}/message_templates`,
+    {
+      headers: headers(),
+      params: { fields: "id,name,status,category,rejected_reason,language", limit: 100 }
+    }
+  );
+}
+
 module.exports = {
   sendText,
   sendButtons,
@@ -285,5 +301,6 @@ module.exports = {
   mediaIndir,
   sablonOlustur,
   sablonDetayGetir,
-  sablonDuzenle
+  sablonDuzenle,
+  sablonlariListele
 };
