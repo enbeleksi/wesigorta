@@ -559,23 +559,38 @@ app.get("/api/panel/gunluk-ozet-sablonu-olustur", panelAuth, async (req, res) =>
 // AGENT_DETAY_TEMPLATE_NAME ile gonderilmeye devam eder (bkz.
 // conversationEngine.js'teki randevuDefteriHatirlatmaGonder), yani gecis
 // sirasinda hicbir bildirim kaybolmaz. Kullanildiktan sonra bu route silinebilir.
+//
+// NOT (01.08.2026, v1/v2 GERCEK SONUCU): sablon-listesi tani ekranindan
+// gorulduu uzere hem v1 hem v2 "MARKETING" degil, rejected_reason
+// "INVALID_FORMAT" ile reddedilmis - yani asil sebep TAG_CONTENT_MISMATCH/
+// pazarlama dili degil, gunluk-ozet-sablonu-olustur route'undaki (yukarida,
+// ayni dosyada) tespit edilen AYNI iki teknik sorunmus: (1) BODY'nin SADECE
+// "{{detay}}" olmasi - degisken hem basta hem sonda tek basina - ve (2)
+// ISIMLI degisken formatinin ({{detay}}) bu hesapta/API surumunde (v20.0)
+// guvenilir calismamasi (musteri_basvuru_bilgilendirme_v5'te de yasanmis,
+// POZISYONEL ({{1}}) formata gecilince cozulmustu; gunluk_bekleyen_is_ozeti_v3'te
+// de ayni cozum PENDING sonuc verdi). v3'te AYNI iki duzeltme birden
+// uygulandi: {{detay}} yerine POZISYONEL {{1}}, ve degisken sabit bir on-ek
+// (📌) ve sabit bir kapanis cumlesiyle sarmalandi - boylece ne "tek basina
+// degisken" ne de "isimli degisken" sorunu kaliyor. Gonderim tarafi da
+// (conversationEngine.js randevuDefteriHatirlatmaGonder) sendTemplate yerine
+// sendTemplatePozisyonel kullanacak sekilde guncellendi.
 app.get("/api/panel/randevu-defteri-sablonu-olustur", panelAuth, async (req, res) => {
   try {
     const sonuc = await sablonOlustur({
-      name: "randevu_defteri_bildirimi_v2",
+      name: "randevu_defteri_bildirimi_v3",
       language: "tr",
       category: "UTILITY",
       components: [
         { type: "HEADER", format: "TEXT", text: "Ekip Bildirimi" },
         {
           type: "BODY",
-          text: "{{detay}}",
+          text: "📌 {{1}}\n\n_Bu mesaj WE Sigorta paneli tarafından otomatik gönderilmiştir._",
           example: {
-            body_text_named_params: [
-              {
-                param_name: "detay",
-                example: "Enbel danışmanı Ahmet Yılmaz (905321112233) ile 10.08.2026 14:30 tarihinde Kadıköy Ofis'te görüşme planladı."
-              }
+            body_text: [
+              [
+                "Enbel danışmanı Ahmet Yılmaz (905321112233) ile 10.08.2026 14:30 tarihinde Kadıköy Ofis'te görüşme planladı."
+              ]
             ]
           }
         }

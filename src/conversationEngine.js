@@ -1933,11 +1933,17 @@ async function gunlukOzetGonder(numara, metin) {
 // defteri-sablonu-olustur, .env.example) denenir; o basarisiz olursa VEYA
 // henuz tanimlanmamissa (Meta onayi bekleniyor olabilir) ESKI genel
 // hatirlatmaGonder'a dusulur - gecis surecinde bile hicbir bildirim kaybolmaz.
+//
+// NOT (01.08.2026): v1/v2 INVALID_FORMAT ile reddedilmisti - gercek sebep
+// gunlukOzetGonder'da bulunan AYNI iki teknik sorun (bkz. server.js'teki
+// /api/panel/randevu-defteri-sablonu-olustur - v3 - yorumu): "tek basina
+// degisken" + "isimli degisken formati guvenilir degil". v3'te ayni cozum:
+// sendTemplate (isimli) yerine sendTemplatePozisyonel kullaniliyor.
 async function randevuDefteriHatirlatmaGonder(numara, metin) {
   const sablonAdi = process.env.RANDEVU_DEFTERI_TEMPLATE_NAME;
   if (sablonAdi) {
     try {
-      await sendTemplate(numara, sablonAdi, "tr", { detay: sablonParametresiIcinTemizle(metin) }, metin);
+      await sendTemplatePozisyonel(numara, sablonAdi, "tr", [sablonParametresiIcinTemizle(metin)], metin);
       return;
     } catch (err) {
       console.error(
