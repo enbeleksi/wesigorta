@@ -70,16 +70,47 @@ function yaklasanYenilemeleriGetir(gunSayisi = 30, danismanNumarasi = null) {
 // Gecmiste kalmis (suresi zaten gecmis) kayitlar da dahildir - leadStore'daki
 // hatirlatma/memnuniyet anketi mantigiyla AYNI ilke: gecikmis bir sey
 // sessizce atlanmaz, ilk firsatta (bir sonraki kontrol dongusunde) islenir.
-function zamaniGelenYenilemeler(esikGunSayisi = 15) {
+//
+// 02.08.2026 eklendi (Enbel'in talebi): "maksimumGecikmeGunSayisi" (varsayilan
+// 30) ile ASAGI sinir da eklendi - COK eski (30 günden fazla gecikmis, orn.
+// 2023/2024 tanzimli, hic zamaninda islenmemis) kayitlar ARTIK WhatsApp
+// "Bekleyen İş"e otomatik dusurulmuyor (ekibi bogan bir "203 açık iş" gibi
+// gercekci olmayan bir yigina yol aciyordu - gercek dosyada üretim tarihleri
+// 2023'e kadar gidiyor). Bu kayitlar sessizce KAYBOLMUYOR - panelin "Üretim"
+// sekmesinden (tumYenilemeleriGetir, hicbir tarih filtresi yok) HER ZAMAN
+// tam olarak gorunmeye devam ediyorlar, sadece WhatsApp'i (ve oradaki "Ekipte
+// toplam X açık iş var" sayisini) kirletmiyorlar.
+function zamaniGelenYenilemeler(esikGunSayisi = 15, maksimumGecikmeGunSayisi = 30) {
   const GUN_MS = 24 * 60 * 60 * 1000;
-  const ufukTarihi = Date.now() + esikGunSayisi * GUN_MS;
-  return tumYenilemeleriGetir().filter((y) => !y.bekleyenIseAktarildiMi && y.bitisTarihi <= ufukTarihi);
+  const simdi = Date.now();
+  const ufukTarihi = simdi + esikGunSayisi * GUN_MS;
+  const enEskiGecerliTarih = simdi - maksimumGecikmeGunSayisi * GUN_MS;
+  return tumYenilemeleriGetir().filter(
+    (y) => !y.bekleyenIseAktarildiMi && y.bitisTarihi <= ufukTarihi && y.bitisTarihi >= enEskiGecerliTarih
+  );
+}
+
+// 02.08.2026 eklendi: yukaridaki "maksimumGecikmeGunSayisi" siniri sadece
+// YENI donusumleri etkiler - DAHA ONCE (bu sinir eklenmeden once, ya da
+// zaman gectikce) zaten "Bekleyen İş"e donusturulmus (bekleyenIseAktarildiMi:
+// true) ama simdi bu sinirin disina cikmis (30 günden fazla gecikmis hale
+// gelmis) kayitlari bulmak icin - server.js'deki temizlik gorevi
+// (eskiYenilemeBekleyenIslerTemizle) bunlarin leadStore'daki karsiligi olan
+// "Açık" talebi geri kaldirir.
+function cokEskiOtomatikDonusturulmusYenilemeler(maksimumGecikmeGunSayisi = 30) {
+  const GUN_MS = 24 * 60 * 60 * 1000;
+  const enEskiGecerliTarih = Date.now() - maksimumGecikmeGunSayisi * GUN_MS;
+  return tumYenilemeleriGetir().filter((y) => y.bekleyenIseAktarildiMi && y.bitisTarihi < enEskiGecerliTarih);
 }
 
 function yenilemeBekleyenIseAktarildiIsaretle(id) {
   const kayit = yenilemeler.get(id);
   if (!kayit) return;
   kayit.bekleyenIseAktarildiMi = true;
+}
+
+function yenilemeGetir(id) {
+  return yenilemeler.get(id) || null;
 }
 
 // --- Uretim Excel'inden toplu yenileme yukleme (01.08.2026 eklendi) ---
@@ -635,7 +666,9 @@ module.exports = {
   tumYenilemeleriGetir,
   yaklasanYenilemeleriGetir,
   zamaniGelenYenilemeler,
+  cokEskiOtomatikDonusturulmusYenilemeler,
   yenilemeBekleyenIseAktarildiIsaretle,
+  yenilemeGetir,
   uretimExceliYukle,
   panelUretimSatiriEkle,
   yenilemeSil,

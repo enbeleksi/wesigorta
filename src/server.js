@@ -1463,9 +1463,16 @@ async function memnuniyetAnketleriniKontrolEt() {
 // islerle AYNI sekilde goruntulenip takip edilebiliyor, kapanana kadar her
 // gun hatirlatiliyor.
 const YENILEME_BEKLEYEN_IS_ESIK_GUN = 15;
+// 02.08.2026 eklendi (Enbel'in talebi): "yenileme süresi 30 gün geçmiş
+// olanları sadece panelden görüntüleyelim" - bkz. yenilemeStore.js'deki
+// zamaniGelenYenilemeler yorumu.
+const YENILEME_BEKLEYEN_IS_MAKSIMUM_GECIKME_GUN = 30;
 
 async function yenilemeleriBekleyenIseAktar() {
-  const zamaniGelenler = yenilemeStore.zamaniGelenYenilemeler(YENILEME_BEKLEYEN_IS_ESIK_GUN);
+  const zamaniGelenler = yenilemeStore.zamaniGelenYenilemeler(
+    YENILEME_BEKLEYEN_IS_ESIK_GUN,
+    YENILEME_BEKLEYEN_IS_MAKSIMUM_GECIKME_GUN
+  );
   for (const kayit of zamaniGelenler) {
     const gecikmisMi = kayit.bitisTarihi < Date.now();
     const tarihMetni = new Date(kayit.bitisTarihi).toLocaleDateString("tr-TR", {
@@ -1490,6 +1497,47 @@ async function yenilemeleriBekleyenIseAktar() {
     });
     yenilemeStore.yenilemeBekleyenIseAktarildiIsaretle(kayit.id);
     console.log("Yenileme bekleyen ise donusturuldu:", kayit.id, kayit.musteriAdi, kayit.urun);
+  }
+}
+
+// 02.08.2026 eklendi (Enbel'in "yenileme süresi 30 gün geçmiş olanları
+// sadece panelden görüntüleyelim, toplam açık iş sayısı gibi veriler sadece
+// panele yansıyacak" talebi uzerine): yukaridaki YENILEME_BEKLEYEN_IS_
+// MAKSIMUM_GECIKME_GUN siniri sadece YENI donusumleri etkiler - bu fonksiyon
+// ise DAHA ONCE (sinir eklenmeden once, ya da zaman gectikce) zaten
+// "Bekleyen İş"e donusturulmus ama artik ya 30 günden fazla gecikmis ya da
+// (panelden "Üretim" sekmesinden silindigi icin) karsiligi kalmamis
+// kayitlarin leadStore'daki açık talebini geri kaldirir - boylece bu kayitlar
+// SADECE panelin "Üretim" sekmesinden gorunur, WhatsApp'taki "Bekleyen İş"
+// listesini (ve oradaki toplam sayiyi) kirletmeye devam etmez. Gercek
+// musteri talepleri (disKaynakId'si "YENILEME:" ile baslamayanlar) buradan
+// HICBIR sekilde etkilenmez.
+async function eskiYenilemeBekleyenIslerTemizle() {
+  const acikYenilemeLeadleri = leadStore
+    .tumLeadleriGetir()
+    .filter((l) => l.durum === "Açık" && typeof l.disKaynakId === "string" && l.disKaynakId.startsWith("YENILEME:"));
+  if (acikYenilemeLeadleri.length === 0) return;
+
+  const cokEskiIdSeti = new Set(
+    yenilemeStore
+      .cokEskiOtomatikDonusturulmusYenilemeler(YENILEME_BEKLEYEN_IS_MAKSIMUM_GECIKME_GUN)
+      .map((y) => y.id)
+  );
+
+  for (const lead of acikYenilemeLeadleri) {
+    const yenilemeId = lead.disKaynakId.slice("YENILEME:".length);
+    const kayitHalaVarMi = !!yenilemeStore.yenilemeGetir(yenilemeId);
+    const cokEskiMi = cokEskiIdSeti.has(yenilemeId);
+    if (!kayitHalaVarMi || cokEskiMi) {
+      leadStore.leadSil(lead.id);
+      console.log(
+        "Eski/gecersiz yenileme kaynakli bekleyen is temizlendi:",
+        lead.id,
+        lead.musteriAdi,
+        yenilemeId,
+        !kayitHalaVarMi ? "(kaynak silinmis)" : "(30 gunden fazla gecikmis)"
+      );
+    }
   }
 }
 
@@ -1612,13 +1660,55 @@ function bosGunMesajiSec() {
 // anlar).
 const GUNLUK_OZET_KAPANIS_CUMLESI = "Açık talepleriniz aşağıda, detay görmek istediğinizi seçin:";
 
+// 02.08.2026 eklendi: WhatsApp sablonundaki TEK parametrenin (butun mesaj
+// metni - gunaydin + kisisel + ekip + kapanis, hepsi TEK degiskende) Meta
+// tarafindan izin verilen 1024 karakter sinirini asmamasi icin. 460 kayitlik
+// toplu yenileme importundan sonra (02.08.2026 sabahi, Railway loglarinda
+// gorulen gercek hata: "Length of the parameters and the template text is
+// 15943, which exceeds the allowed length of 1024") "ekip" bolumu SINIRSIZ
+// oldugu icin mesaj devasa buyudu, GUNLUK_OZET_TEMPLATE_NAME gonderimi
+// basarisiz oldu ve kod SESSIZCE eski/yanlis basikli genel sablona
+// ("Yeni bir talep geldi!") dustu - kullanicinin sikayet ettigi tam olarak
+// budur. Cift katmanli guvenlik: 1) her bolum en cok GUNLUK_OZET_BOLUM_MAX_SATIR
+// satir gosterir (en uzun süredir bekleyenler once - "Bekleyen İş" interaktif
+// listesindeki AYNI mantik), kalani icin panele yonlendirilir; 2) yine de (cok
+// uzun musteri/urun adlari birikirse) TUM mesaj GUNLUK_OZET_TOPLAM_KARAKTER_SINIRI'ni
+// asarsa, sondan kirpilip bir uyari eklenir - boylece sablon gonderimi ARTIK
+// SADECE uzunluk yuzunden basarisiz olup yanlis basikli sablona dusemez.
+const GUNLUK_OZET_BOLUM_MAX_SATIR = 8;
+const GUNLUK_OZET_TOPLAM_KARAKTER_SINIRI = 950; // 1024 sablon sinirinin altinda guvenli pay
+
+function ozetBolumSatirlariniOlustur(isler) {
+  if (isler.length === 0) return null;
+  const siraliIsler = [...isler].sort((a, b) => a.olusturulmaZamani - b.olusturulmaZamani);
+  const gosterilecekler = siraliIsler.slice(0, GUNLUK_OZET_BOLUM_MAX_SATIR);
+  const kalan = siraliIsler.length - gosterilecekler.length;
+  const satirlar = gosterilecekler.map(acikIsSatiriOlustur).join("\n");
+  return kalan > 0 ? `${satirlar}\n...ve ${kalan} tane daha (tam liste için panele bakabilirsiniz).` : satirlar;
+}
+
+function mesajUzunlugunuGuvenliyeIndir(mesaj) {
+  // Sablona giderken satir sonlari " • " olarak genisledigi icin (bkz.
+  // conversationEngine.js'teki sablonParametresiIcinTemizle), uzunluk
+  // kontrolunu tahmini bir "guvenli pay" yerine DOGRUDAN o donusumun
+  // SONUCU uzerinden yapiyoruz - Meta'nin gercekte gorecegi uzunluga gore.
+  const sablondakiUzunluk = mesaj.replace(/\r\n|\r|\n/g, " • ").length;
+  if (sablondakiUzunluk <= GUNLUK_OZET_TOPLAM_KARAKTER_SINIRI) return mesaj;
+  const kirpmaNotu = "\n\n... (mesaj uzunluk sınırı nedeniyle kısaltıldı, tam liste için panele bakabilirsiniz)";
+  // Kirpma orani, satir-sonu genislemesini de kabaca hesaba katmak icin
+  // sablondakiUzunluk/mesaj.length oranina gore olceklenir.
+  const oran = mesaj.length / sablondakiUzunluk;
+  const hedefHamUzunluk = Math.floor((GUNLUK_OZET_TOPLAM_KARAKTER_SINIRI - kirpmaNotu.length) * oran);
+  return mesaj.slice(0, Math.max(0, hedefHamUzunluk)) + kirpmaNotu;
+}
+
 let gunlukOzetGonderilenGun = null; // "YYYY-MM-DD" - ayni gun icinde tekrar gonderilmesin diye
 
 // 27.07.2026 eklendi: bir kisinin KENDI bolumunu (varsa isleri, yoksa rastgele
 // bir "bos gun" mesaji) olusturur - hem sade danisman mesajinda hem de
 // Bahadır/Enbel'in birlesik mesajindaki "kendi isleriniz" bolumunde kullanilir.
 function kisiselBolumMetni(kisiselIsler) {
-  return kisiselIsler.length > 0 ? kisiselIsler.map(acikIsSatiriOlustur).join("\n") : bosGunMesajiSec();
+  return kisiselIsler.length > 0 ? ozetBolumSatirlariniOlustur(kisiselIsler) : bosGunMesajiSec();
 }
 
 // 27.07.2026 eklendi: kullanicinin ekran goruntusuyle bildirdigi butun
@@ -1693,7 +1783,7 @@ async function gunlukBekleyenIsOzetiKontrolEt() {
       kapanisEklensinMi = kisiselIsler.length > 0 || elementerAcikIsler.length > 0;
       const ekipBolumu =
         elementerAcikIsler.length > 0
-          ? elementerAcikIsler.map(acikIsSatiriOlustur).join("\n")
+          ? ozetBolumSatirlariniOlustur(elementerAcikIsler)
           : "Şu an ekipte bekleyen elementer bir iş yok 🎉";
       mesaj =
         `${gunaydinMesaji}\n\n` +
@@ -1703,7 +1793,7 @@ async function gunlukBekleyenIsOzetiKontrolEt() {
       logEtiketi = `Bahadır (${kisiselIsler.length} kendi, ${elementerAcikIsler.length} ekip)`;
     } else if (enbel && danisman.number === enbel.telefon) {
       kapanisEklensinMi = kisiselIsler.length > 0 || acikLeadler.length > 0;
-      const ekipBolumu = acikLeadler.length > 0 ? acikLeadler.map(acikIsSatiriOlustur).join("\n") : "Şu an ekipte bekleyen bir iş yok 🎉";
+      const ekipBolumu = acikLeadler.length > 0 ? ozetBolumSatirlariniOlustur(acikLeadler) : "Şu an ekipte bekleyen bir iş yok 🎉";
       mesaj =
         `${gunaydinMesaji}\n\n` +
         `👤 Kendi bekleyen işleriniz:\n${kisiselBolumMetni(kisiselIsler)}\n\n` +
@@ -1752,8 +1842,14 @@ async function gunlukBekleyenIsOzetiKontrolEt() {
     // cok satirli liste hala " • " ile tek satira sikisiyor (bkz.
     // sablonParametresiIcinTemizle yorumu) - bu, WhatsApp'in TUM sablonlar icin
     // gecerli, degistirilemeyen bir platform kisitlamasi.
+    const guvenliMesaj = mesajUzunlugunuGuvenliyeIndir(mesaj);
+    if (guvenliMesaj.length !== mesaj.length) {
+      console.log(
+        `Gunluk ozet mesaji uzunluk siniri asildigi icin kisaltildi (${danisman.name}): ${mesaj.length} -> ${guvenliMesaj.length} karakter`
+      );
+    }
     try {
-      await gunlukOzetGonder(danisman.number, mesaj);
+      await gunlukOzetGonder(danisman.number, guvenliMesaj);
       console.log(`Gunluk bekleyen is ozeti gonderildi: ${logEtiketi}`);
     } catch (err) {
       console.error(`Gunluk bekleyen is ozeti gonderilemedi (${danisman.name}):`, err?.response?.data || err.message);
@@ -1850,6 +1946,10 @@ async function baslat() {
 
   setInterval(() => {
     yenilemeleriBekleyenIseAktar().catch((err) => console.error("Yenileme -> bekleyen is donusumu hatasi:", err));
+  }, HATIRLATMA_KONTROL_SIKLIGI_MS);
+
+  setInterval(() => {
+    eskiYenilemeBekleyenIslerTemizle().catch((err) => console.error("Eski yenileme bekleyen is temizligi hatasi:", err));
   }, HATIRLATMA_KONTROL_SIKLIGI_MS);
 
   setInterval(() => {

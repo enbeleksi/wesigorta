@@ -1272,9 +1272,13 @@ async function anaMenuGoster(from, session) {
     return `${ikon} ${l.musteriAdi || l.telefon} (${l.urun})${danismanEtiketi}`;
   });
 
+  // 02.08.2026 eklendi (Enbel'in talebi): "toplam açık iş sayısı gibi
+  // veriler sadece panele yansıyacak" - WhatsApp'ta artik TOPLAM sayi
+  // SOYLENMIYOR, sadece en uzun süredir bekleyen 10 tanesi gosteriliyor;
+  // tam sayi/tam liste icin panele yonlendiriliyor.
   const baslikMetni =
     yoneticiMi && tumAcikLeadler.length > 10
-      ? `Ekipte toplam ${tumAcikLeadler.length} açık iş var, en uzun süredir bekleyen 10 tanesi aşağıda (tamamı için panele bakabilirsiniz). Detay görmek istediğinizi seçin:`
+      ? `Ekipte en uzun süredir bekleyen 10 iş aşağıda (tüm liste ve toplam sayı için panele bakabilirsiniz). Detay görmek istediğinizi seçin:`
       : `Açık talepleriniz aşağıda, detay görmek istediğinizi seçin:`;
 
   await sendList(from, baslikMetni, "Talep Seç", satirlar);

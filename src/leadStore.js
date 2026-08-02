@@ -287,6 +287,16 @@ function ekipOzeti() {
   return ozet.sort((a, b) => b.toplamTalep - a.toplamTalep);
 }
 
+// 02.08.2026 eklendi: yenilemeStore'dan otomatik olusturulmus ama artik
+// gecersiz hale gelmis (30 günden fazla gecikmis ya da kaynagi silinmis)
+// "Bekleyen İş" kayitlarini temizlemek icin (bkz. server.js'deki
+// eskiYenilemeBekleyenIslerTemizle). Normal musteri taleplerinde durum
+// degistirilerek (Olumlu/Olumsuz Kapandı) kapatilir, silinmez - bu fonksiyon
+// SADECE otomatik/hatali olusmus kayitlar icin kullanilmalidir.
+function leadSil(id) {
+  return leads.delete(id);
+}
+
 // Sunucu baslarken bir kez cagrilir - DB'de kayitli talepler varsa belleğe yukler.
 async function yukle() {
   const veri = await db.oku("leads");
@@ -317,6 +327,7 @@ module.exports = {
   zamaniGelenHatirlatmalar,
   hatirlatmaGonderildiIsaretle,
   hatirlatmaDenemeBasarisiz,
+  leadSil,
   danismanIstatistikleri,
   ekipOzeti,
   memnuniyetAnketiKur,
