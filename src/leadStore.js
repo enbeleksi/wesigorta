@@ -69,7 +69,15 @@ function gecmisLeadEkle({
   durum,
   olusturulmaZamani,
   netPrim,
-  disKaynakId
+  disKaynakId,
+  // 02.08.2026 eklendi: yenileme kaynakli bir Bekleyen İş kaydinin, ilgili
+  // policenin GERCEK bitis (yenileme) tarihini de tasimasi icin - bu sayede
+  // "Gecikmiş İş" (suresi dolmus ama 30 gunu doldurmamis) ile "Bekleyen İş"
+  // (suresi henuz dolmamis) ayrimini server.js/advisorEngine.js kolayca
+  // yapabiliyor. Excel'den veya Excel-disi olusturulan (orn. destek talebi)
+  // normal leadlerde bu alan null kalir - sadece yenileme donusumunde
+  // (server.js -> yenilemeleriBekleyenIseAktar) doldurulur.
+  yenilemeBitisTarihi
 }) {
   sayac += 1;
   const id = `L${Date.now()}${sayac}`;
@@ -88,7 +96,8 @@ function gecmisLeadEkle({
     olusturulmaZamani: olusturulmaZamani || Date.now(),
     guncellenmeZamani: Date.now(),
     netPrim: typeof netPrim === "number" ? netPrim : null,
-    disKaynakId: disKaynakId || null
+    disKaynakId: disKaynakId || null,
+    yenilemeBitisTarihi: typeof yenilemeBitisTarihi === "number" ? yenilemeBitisTarihi : null
   };
   leads.set(id, lead);
   return lead;

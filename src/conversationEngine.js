@@ -5,6 +5,7 @@ const { proformaAnalizEt } = require("./proformaAnaliz");
 const { garantiEmekliligeGonder } = require("./eposta");
 const messageLog = require("./messageLog");
 const leadStore = require("./leadStore");
+const bekleyenDetayStore = require("./bekleyenDetayStore");
 const musteriProfilStore = require("./musteriProfilStore");
 const sozlukSSS = require("./sozlukSSS");
 const tssOzelSartSSS = require("./tssOzelSartSSS");
@@ -762,23 +763,40 @@ function kompaktDetayOlustur(flow, session, telefon) {
 }
 
 // Bir danismana/acenteye bildirim gonderir. Uc katmanli calisir:
-// 1) Eger Railway'de AGENT_DETAY_TEMPLATE_NAME ayarlanmissa (tek degiskenli,
-//    tum detaylari iceren onaylanmis bir sablon), once onu dener - basariliysa
-//    danisman TUM bilgiyi WhatsApp'ta gorur, panele bakmasina gerek kalmaz.
-//    Basarili olursa BURADA DURULUR - ayrica baska bir mesaj gonderilmez,
-//    cunku tum bilgi zaten bu tek mesajda var (gereksiz tekrari onlemek icin).
-// 2) O basarisiz olursa ya da ayarlanmamissa, AGENT_TEMPLATE_NAME (kisa,
+// 1) Eger Railway'de AGENT_DETAY_TEMPLATE_NAME ayarlanmissa (tek degiskenli
+//    onaylanmis bir sablon), once onu dener.
+//    02.08.2026 DUZELTME (Enbel'in talebi): sablon PARAMETRESI ARTIK TAM
+//    detayi tasimiyor - WhatsApp/Meta kisitlamasi geregi zaten gercek satir
+//    sonu icheremiyordu ( • ile duzlestiriliyordu, bkz.
+//    sablonParametresiIcinTemizle), bu da tek bir kalabalik paragraf gibi
+//    goruntuye sebep oluyordu. Bunun yerine sadece KISA bir "Müşteri: X,
+//    Ürün: Y, detayını görmek için 'evet' yazabilirsiniz" daveti gonderiliyor.
+//    Sablon basariliysa TAM detay (gercek satir sonlariyla) HEMEN
+//    GONDERILMIYOR - bekleyenDetayStore'a kuyruklaniyor, danisman "evet"
+//    yazinca advisorEngine.js tarafindan (DETAY_EVET_IDLE_DURUMLARI kontrolu
+//    ile) gercek satir sonlariyla ayri bir mesaj olarak gonderiliyor.
+// 2) Sablon basarisiz olursa ya da ayarlanmamissa, AGENT_TEMPLATE_NAME (kisa,
 //    3 degiskenli eski sablon) varsa onu dener - sadece temel bilgiyi iletir.
-// 3) Ayrica (yalnizca 1. adim basarisiz olduysa) detayli metni normal metin
-//    olarak da gondermeyi dener - pencere acik ise ekstra bir kopya daha ulasir.
+// 3) O da basarisiz/ayarsizsa (ya da hicbir sablon konfigure edilmemisse),
+//    detayli metni normal metin olarak dogrudan gondermeyi dener - "evet"
+//    davetinin gosterilemedigi bu durumda beklemeye gerek yok, detay hemen
+//    (pencere acik ise) ulassin.
 async function bildirimGonder(numara, urunAdi, musteriAdi, telefon, detayliMetin, kompaktDetay, danismanAdi) {
   const detayliSablonAdi = process.env.AGENT_DETAY_TEMPLATE_NAME;
   const kisaSablonAdi = process.env.AGENT_TEMPLATE_NAME;
 
   if (detayliSablonAdi && kompaktDetay) {
+    const kisaDavet =
+      `Yeni bir ${urunAdi} talebi geldi. Müşteri: ${musteriAdi}` +
+      (danismanAdi ? ` (${danismanAdi})` : "") +
+      `. Detayını görmek için "evet" yazabilirsiniz.`;
     try {
-      await sendTemplate(numara, detayliSablonAdi, "tr", { detay: sablonParametresiIcinTemizle(kompaktDetay) }, detayliMetin);
-      return; // basarili - tum detay zaten iletildi, baska mesaj gondermeye gerek yok
+      await sendTemplate(numara, detayliSablonAdi, "tr", { detay: sablonParametresiIcinTemizle(kisaDavet) });
+      // Basarili - tam detayi HEMEN degil, danisman "evet" yazinca gondermek
+      // uzere kuyruga ekliyoruz (bkz. advisorEngine.js'deki "evet" yakalama
+      // mantigi). Burada donuluyor, baska bir mesaj gonderilmiyor.
+      bekleyenDetayStore.detayEkle(numara, { musteriAdi, urun: urunAdi, detayliMetin });
+      return;
     } catch (err) {
       console.error("Detayli sablon bildirimi gonderilemedi:", err?.response?.data || err.message);
     }

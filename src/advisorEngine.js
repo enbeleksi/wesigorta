@@ -12,6 +12,10 @@ const { getSession, resetSession } = require("./sessionStore");
 const { sendText, sendButtons, sendList, sendDocument, sendTemplatePozisyonel, mediaIndir } = require("./loggedWhatsapp");
 const leadStore = require("./leadStore");
 const yenilemeStore = require("./yenilemeStore");
+// 02.08.2026 eklendi: yeni talep bildirimlerindeki "evet yazarak detayını
+// görebilirsiniz" akışı icin - bkz. conversationEngine.js -> bildirimGonder
+// ve asagidaki DETAY_EVET_IDLE_DURUMLARI kontrolu.
+const bekleyenDetayStore = require("./bekleyenDetayStore");
 const engelliNumaralarStore = require("./engelliNumaralarStore");
 const dokumanStore = require("./dokumanStore");
 // 31.07.2026 eklendi (Randevu Defterim ozelligi).
@@ -1147,8 +1151,15 @@ function turkiyeSaatiniFormatla(ms, secenekler) {
 // - Sira, kullanicinin belirttigi son haliyle: Bekleyen İş, BES Hayat
 //   Başvurusu, Elementer Teklif Al, Yenileme Takibi Ekle, Randevu Defterim,
 //   Destek Talebi Oluştur, Performansım, Sık Sorulan Sorular.
+// - 02.08.2026 eklendi: "Bekleyen İş"in hemen altina "Gecikmiş İş" eklendi -
+//   yenileme kaynakli, suresi dolmus (bitis tarihi gecmis) ama henuz 30 gunu
+//   doldurmamis (server.js'deki YENILEME_BEKLEYEN_IS_MAKSIMUM_GECIKME_GUN)
+//   isler artik "Bekleyen İş"ten cikarilip burada ayrica listeleniyor -
+//   boylece suresi gecmemis isler ile suresi coktan gecmis/aciliyet gerektiren
+//   isler WhatsApp listesinde karismiyor (bkz. anaMenuGoster/gecikmisIsMenuGoster).
 const ANA_MENU_SECENEKLERI = [
   "Bekleyen İş",
+  "Gecikmiş İş",
   "BES Hayat Başvurusu",
   "Elementer Teklif Al",
   "Yenileme Takibi Ekle",
@@ -1162,6 +1173,22 @@ const ANA_MENU_SECENEKLERI = [
 // gibi bir kapanis/red ifadesi iceren kisa cevaplari yakalar (orn. "hayır yok
 // teşekkürler", "yok teşekkürler", "hayır teşekkürler", "teşekkürler").
 const KARSILAMA_KAPANIS_REGEX = /\b(hay[ıi]r|yok|te[şs]ekk[üu]r)/i;
+
+// 02.08.2026 eklendi: yeni talep bildirimindeki "evet yazarak detayını
+// görebilirsiniz" davetine cevaben gelen bir "evet"i yakalamak icin -
+// yalnizca danismanin herhangi bir SORUYA cevap vermedigi, "bos"/menu
+// benzeri durumlarda devreye girer. Diger TUM durumlarda (orn. yeni musteri
+// talebi doldururken "Sigortalı Türkiye Cumhuriyeti vatandaşı mı?" gibi
+// sorularin gercek "Evet" cevaplarinda) BILEREK devre disi - aksi halde
+// danismanin normal soru cevabi burada yanlislikla "detay talebi" sanilirdi
+// (bkz. asagidaki mevcut "evet" HARIC TUTMA yorumu - ayni sebep).
+const DETAY_EVET_IDLE_DURUMLARI = new Set([
+  "DANISMAN_KARSILAMA",
+  "DANISMAN_LEAD_SECIMI",
+  "DANISMAN_LEAD_DETAY",
+  "DANISMAN_GECIKMIS_LEAD_SECIMI"
+]);
+const DETAY_EVET_REGEX = /^evet[\s!.,😊🙏👍🎉]*$/i;
 
 // 31.07.2026 eklendi: "Sık Sorulan Sorular" (DANISMAN_SSS_SORU) serbest
 // soru-cevap modunda, danismanin yazdigi metnin SADECE bir kapanis/tesekkur
@@ -1228,15 +1255,44 @@ async function formUrunSec(from, session) {
   await sendList(from, "Hangi ürünün formunu/dokümanını almak istersiniz?", "Ürün Seç", etiketler);
 }
 
+// 02.08.2026 eklendi (Enbel'in talebi): uretim tablosundaki musteri isimleri
+// kaynakta TAMAMI BUYUK HARF geliyor (orn. "İSMAİL KEREM GELİR") - Bekleyen
+// İş ve Gecikmiş İş WhatsApp listelerinde bunun yerine sadece ilk harfleri
+// buyuk gosterelim istendi ("İsmail Kerem Gelir"). Turkce'ye ozgu I/İ/ı/i
+// donusumlerinin dogru calismasi icin (orn. "İ" kucuk harfe cevrilince "i"
+// olmali, duz "I" kucuk harfe cevrilince "ı" olmali) toLocaleLowerCase/
+// toLocaleUpperCase MUTLAKA "tr-TR" locale'iyle cagriliyor - locale'siz
+// (varsayilan/İngilizce) cagri bu harfler icin yanlis sonuc uretir.
+function isimIlkHarfleriBuyukYap(isim) {
+  if (!isim || typeof isim !== "string") return isim;
+  return isim
+    .toLocaleLowerCase("tr-TR")
+    .split(" ")
+    .map((kelime) => (kelime ? kelime.charAt(0).toLocaleUpperCase("tr-TR") + kelime.slice(1) : kelime))
+    .join(" ");
+}
+
+// Bir leadin, "Gecikmiş İş" listesine tasinmasi gereken (yenileme kaynakli,
+// suresi coktan dolmus) bir kayit olup olmadigini soyler - bkz. asagidaki
+// anaMenuGoster (bu kayitlari DISLAR) ve gecikmisIsMenuGoster (SADECE bu
+// kayitlari gosterir) arasindaki karsilikli disleme/filtreleme mantigi.
+function gecikmisYenilemeMi(lead) {
+  return typeof lead.yenilemeBitisTarihi === "number" && lead.yenilemeBitisTarihi < Date.now();
+}
+
 // --- Mevcut talepleri listeleme/yonetme ---
 async function anaMenuGoster(from, session) {
   const danisman = danismaniBul(from);
   const yoneticiMi = YONETICI_NUMARALARI.includes(from);
   // Yonetici (Bahadır/Enbel) icin TUM ekibin acik isleri, digerleri icin
   // sadece kendi acik isleri (bkz. yukaridaki YONETICI_NUMARALARI yorumu).
+  // 02.08.2026 eklendi: yenileme kaynakli, suresi coktan dolmus (gecikmisYenilemeMi)
+  // kayitlar artik BURADA GOSTERILMIYOR - "Gecikmiş İş" menusune tasindi
+  // (bkz. gecikmisIsMenuGoster), boylece "Bekleyen İş" sadece suresi henuz
+  // gecmemis/normal isleri gosteriyor.
   const tumAcikLeadler = leadStore
     .tumLeadleriGetir()
-    .filter((l) => (yoneticiMi ? true : l.danismanNumarasi === from) && l.durum === "Açık");
+    .filter((l) => (yoneticiMi ? true : l.danismanNumarasi === from) && l.durum === "Açık" && !gecikmisYenilemeMi(l));
 
   if (tumAcikLeadler.length === 0) {
     session.state = "DANISMAN_LEAD_SECIMI";
@@ -1269,7 +1325,7 @@ async function anaMenuGoster(from, session) {
   const satirlar = acikLeadler.map((l) => {
     const ikon = l.hatirlatma ? "⏰" : "⚪";
     const danismanEtiketi = yoneticiMi && l.danismanAdi ? ` - ${l.danismanAdi}` : "";
-    return `${ikon} ${l.musteriAdi || l.telefon} (${l.urun})${danismanEtiketi}`;
+    return `${ikon} ${isimIlkHarfleriBuyukYap(l.musteriAdi) || l.telefon} (${l.urun})${danismanEtiketi}`;
   });
 
   // 02.08.2026 eklendi (Enbel'in talebi): "toplam açık iş sayısı gibi
@@ -1280,6 +1336,55 @@ async function anaMenuGoster(from, session) {
     yoneticiMi && tumAcikLeadler.length > 10
       ? `Ekipte en uzun süredir bekleyen 10 iş aşağıda (tüm liste ve toplam sayı için panele bakabilirsiniz). Detay görmek istediğinizi seçin:`
       : `Açık talepleriniz aşağıda, detay görmek istediğinizi seçin:`;
+
+  await sendList(from, baslikMetni, "Talep Seç", satirlar);
+}
+
+// 02.08.2026 eklendi (Enbel'in talebi): "Bekleyen İş"in altina, suresi
+// dolmus (bitis tarihi gecmis) ama henuz 30 gunu doldurmamis (server.js'deki
+// YENILEME_BEKLEYEN_IS_MAKSIMUM_GECIKME_GUN siniri - o sinirdan sonra zaten
+// otomatik temizleniyor, bkz. server.js'deki eskiYenilemeBekleyenIslerTemizle)
+// yenileme kaynakli isleri AYRI gosteren yeni bir menu. anaMenuGoster ile
+// SIMETRIK calisir (ayni yonetici/sayfalama/siralama mantigi), ama ters
+// filtre kullanir (SADECE gecikmisYenilemeMi(l) true olanlar) ve KENDI
+// session state'ini (DANISMAN_GECIKMIS_LEAD_SECIMI) + KENDI liste alanini
+// (session.gecikmisLeadListesi) kullanir - boylece "Bekleyen İş" listesinden
+// secim yapiliyormus gibi yanlis bir kayda dusulmesi (state karismasi)
+// engellenir.
+async function gecikmisIsMenuGoster(from, session) {
+  const yoneticiMi = YONETICI_NUMARALARI.includes(from);
+  const tumGecikmisLeadler = leadStore
+    .tumLeadleriGetir()
+    .filter((l) => (yoneticiMi ? true : l.danismanNumarasi === from) && l.durum === "Açık" && gecikmisYenilemeMi(l));
+
+  if (tumGecikmisLeadler.length === 0) {
+    session.state = "DANISMAN_GECIKMIS_LEAD_SECIMI";
+    session.gecikmisLeadListesi = [];
+    await sendText(
+      from,
+      yoneticiMi ? `Şu an ekipte gecikmiş bir iş yok. 🎉` : `Şu an gecikmiş bir işiniz yok. 🎉`
+    );
+    return;
+  }
+
+  const siraliLeadler = yoneticiMi
+    ? [...tumGecikmisLeadler].sort((a, b) => a.olusturulmaZamani - b.olusturulmaZamani)
+    : tumGecikmisLeadler;
+  const gecikmisLeadler = siraliLeadler.slice(0, 10);
+
+  session.state = "DANISMAN_GECIKMIS_LEAD_SECIMI";
+  session.gecikmisLeadListesi = gecikmisLeadler.map((l) => l.id);
+
+  const satirlar = gecikmisLeadler.map((l) => {
+    const ikon = l.hatirlatma ? "⏰" : "🔴";
+    const danismanEtiketi = yoneticiMi && l.danismanAdi ? ` - ${l.danismanAdi}` : "";
+    return `${ikon} ${isimIlkHarfleriBuyukYap(l.musteriAdi) || l.telefon} (${l.urun})${danismanEtiketi}`;
+  });
+
+  const baslikMetni =
+    yoneticiMi && tumGecikmisLeadler.length > 10
+      ? `Ekipte en uzun süredir gecikmiş 10 iş aşağıda (tüm liste için panele bakabilirsiniz). Detay görmek istediğinizi seçin:`
+      : `Gecikmiş talepleriniz aşağıda, detay görmek istediğinizi seçin:`;
 
   await sendList(from, baslikMetni, "Talep Seç", satirlar);
 }
@@ -3624,6 +3729,37 @@ async function handleAdvisorMessage(from, parsed) {
     return;
   }
 
+  // 02.08.2026 eklendi (Enbel'in talebi): yeni talep bildiriminde artik TAM
+  // detay hemen gelmiyor - once kisa bir "evet yazarak detayını görebilirsiniz"
+  // daveti gidiyor (bkz. conversationEngine.js -> bildirimGonder). Danisman
+  // "evet" yazinca, bekleyenDetayStore'daki EN ESKI detayi gercek satir
+  // sonlariyla (duz metin) gonderiyoruz. Sadece "bos"/menu benzeri
+  // durumlarda (DETAY_EVET_IDLE_DURUMLARI) yakalanir - yukaridaki mevcut
+  // "evet" HARIC TUTMA yorumundaki AYNI sebeple (soru cevaplarina karismasin
+  // diye) baska hicbir durumda devreye girmez.
+  if (
+    parsed.type === "text" &&
+    DETAY_EVET_IDLE_DURUMLARI.has(session.state) &&
+    DETAY_EVET_REGEX.test(userText || "")
+  ) {
+    const detay = bekleyenDetayStore.sonrakiDetayAl(from);
+    if (detay) {
+      await sendText(from, detay.detayliMetin);
+      const kalan = bekleyenDetayStore.bekleyenSayisi(from);
+      if (kalan > 0) {
+        await sendText(
+          from,
+          `Ayrıca ${kalan} bekleyen talep detayı daha var, "evet" yazmaya devam edebilirsiniz.`
+        );
+      }
+      return;
+    }
+    // Kuyrukta bekleyen bir detay yoksa (orn. zaten gosterildi, ya da
+    // danisman bagimsiz bir sebeple "evet" yazdi), normal akisa devam - bu
+    // durumda switch(session.state) mevcut durumu (orn. DANISMAN_KARSILAMA
+    // icin ANA_MENU_SECENEKLERI eslesmesi) normal sekilde isler.
+  }
+
   switch (session.state) {
     case "DANISMAN_KARSILAMA": {
       // WhatsApp'in dugme/liste basliklarini kestigi durumlarda (asagida
@@ -3644,6 +3780,10 @@ async function handleAdvisorMessage(from, parsed) {
       }
       if (userText === "Bekleyen İş") {
         await anaMenuGoster(from, session);
+        return;
+      }
+      if (userText === "Gecikmiş İş") {
+        await gecikmisIsMenuGoster(from, session);
         return;
       }
       if (userText === "Destek Talebi Oluştur") {
@@ -3756,6 +3896,27 @@ async function handleAdvisorMessage(from, parsed) {
       const lead = leadId && leadStore.leadGetir(leadId);
       if (!lead) {
         await anaMenuGoster(from, session);
+        return;
+      }
+      await leadDetayGoster(from, session, lead);
+      return;
+    }
+
+    // 02.08.2026 eklendi: "Gecikmiş İş" listesinden secim - DANISMAN_LEAD_SECIMI
+    // ile AYNI mantik, ama KENDI liste alanini (session.gecikmisLeadListesi)
+    // okur ve hata/bos durumunda "Bekleyen İş"e degil KENDI menusune
+    // (gecikmisIsMenuGoster) doner - boylece yanlislikla Bekleyen İş
+    // listesine karisilmaz.
+    case "DANISMAN_GECIKMIS_LEAD_SECIMI": {
+      if (parsed.type !== "interactive" || !parsed.interactiveId) {
+        await gecikmisIsMenuGoster(from, session);
+        return;
+      }
+      const index = parseInt(parsed.interactiveId.replace("list_", ""), 10);
+      const leadId = (session.gecikmisLeadListesi || [])[index];
+      const lead = leadId && leadStore.leadGetir(leadId);
+      if (!lead) {
+        await gecikmisIsMenuGoster(from, session);
         return;
       }
       await leadDetayGoster(from, session, lead);

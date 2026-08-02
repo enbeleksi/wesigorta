@@ -1493,7 +1493,10 @@ async function yenilemeleriBekleyenIseAktar() {
       durum: "Açık",
       olusturulmaZamani: Date.now(),
       netPrim: null,
-      disKaynakId: `YENILEME:${kayit.id}`
+      disKaynakId: `YENILEME:${kayit.id}`,
+      // 02.08.2026 eklendi: "Gecikmiş İş" / "Bekleyen İş" ayrimi icin
+      // (bkz. advisorEngine.js -> gecikmisIsMenuGoster/anaMenuGoster).
+      yenilemeBitisTarihi: kayit.bitisTarihi
     });
     yenilemeStore.yenilemeBekleyenIseAktarildiIsaretle(kayit.id);
     console.log("Yenileme bekleyen ise donusturuldu:", kayit.id, kayit.musteriAdi, kayit.urun);
