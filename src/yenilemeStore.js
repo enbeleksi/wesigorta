@@ -287,7 +287,32 @@ function uretimExcelSatirlariniOku(buffer) {
   if (!ilkSayfaAdi) return { hata: "Dosyada okunabilir bir sayfa bulunamadı." };
   const sayfa = workbook.Sheets[ilkSayfaAdi];
 
-  const hamDiziler = XLSX.utils.sheet_to_json(sayfa, { header: 1, defval: "", raw: false, blankrows: false });
+  // 01.08.2026'da DUZELTILEN CIDDI BIR HATA: eskiden burada iki AYRI
+  // sheet_to_json cagrisi yapiliyordu - (1) baslik satirini BULMAK icin
+  // "blankrows: false" ile (yani BOS satirlar ATLANARAK) bir dizi
+  // cikartiliyor, bulunan index (orn. 0) sonra (2) asil veriyi cekmek icin
+  // "range: baslikIndex" olarak KULLANILIYORDU. SORUN: gercek uretim
+  // dosyasinda ilk satir (Excel satir 1) TAMAMEN BOS, asil basliklar 2.
+  // satirda (index 1) - (1). cagrida bu bos satir FILTRELENDIGI icin baslik
+  // "index 0" olarak BULUNUYORDU (filtrelenmis dizideki konumu), AMA (2).
+  // cagridaki "range" FIZIKSEL satir numarasi bekliyor (filtrelenmemis!) -
+  // yani range:0 aslinda hala BOS olan gercek 1. satiri baslik sanip
+  // kullaniyordu, GERCEK baslik satiri (SİGORTALI ADI SOYADI, TANZİM
+  // TARİHİ vb.) bir veri satiri gibi islenip, TUM gercek veri satirlari da
+  // yanlis (bos/otomatik) baslik anahtarlariyla eslesiyordu. Sonuc: HICBIR
+  // satirda musteriAdi/urun bulunamiyordu, ama bu "atlanan" olarak da
+  // SAYILMIYORDU (bos satir sanilip sessizce gorulmezden geliniyordu) -
+  // canli ortamda 774 satirlik gercek dosya 0 eklenen/0 guncellenen/0
+  // atlanan olarak "islendi" (bkz. Railway loglari, Bahadır'in yukledigi
+  // "ELEMENTER ÜRETİM TAKİP 01.08.2026.xlsx").
+  //
+  // DUZELTME: TEK bir array-of-arrays okumasi yapip (bos satirlar DAHIL,
+  // yani FIZIKSEL satir sirasi bozulmadan), baslik satirini bulduktan sonra
+  // sonraki satirlari o baslik hucrelerini anahtar olarak kullanarak KENDIMIZ
+  // nesnelere ceviriyoruz - XLSX'in "range" tabanli ikinci bir cagrisina
+  // (ve onun bos-satir/fiziksel-satir hizalama varsayimlarina) hic
+  // guvenmiyoruz.
+  const hamDiziler = XLSX.utils.sheet_to_json(sayfa, { header: 1, defval: "", raw: true, blankrows: true });
   const baslikIndex = uretimBasligiSatiriBul(hamDiziler);
   if (baslikIndex === null) {
     return {
@@ -297,7 +322,19 @@ function uretimExcelSatirlariniOku(buffer) {
     };
   }
 
-  const satirlar = XLSX.utils.sheet_to_json(sayfa, { range: baslikIndex, defval: "", raw: true });
+  const baslikSatiri = hamDiziler[baslikIndex] || [];
+  const satirlar = [];
+  for (let i = baslikIndex + 1; i < hamDiziler.length; i++) {
+    const satirDizi = hamDiziler[i] || [];
+    // Tamamen bos (ara) satirlari atla.
+    if (satirDizi.every((h) => h === "" || h === undefined || h === null)) continue;
+    const satirNesnesi = {};
+    baslikSatiri.forEach((baslikHucre, idx) => {
+      if (baslikHucre === "" || baslikHucre === undefined || baslikHucre === null) return;
+      satirNesnesi[baslikHucre] = satirDizi[idx];
+    });
+    satirlar.push(satirNesnesi);
+  }
   return { satirlar };
 }
 
