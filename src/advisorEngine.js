@@ -2830,17 +2830,23 @@ async function randevuDefteriMenuGoster(from, session) {
 
 async function randevuDefteriExcelYuklemeBaslat(from, session) {
   session.state = "DANISMAN_RANDEVU_DEFTERI_EXCEL_BEKLE";
+  // 02.08.2026 DUZELTME (Enbel'in gonderdigi gercek "Referans Listesi
+  // Şevval.xlsx" formati esas alinarak guncellendi): danisman ARTIK gercek
+  // kaynak dosyanin sutunlarini goruyor, "Ad Soyad"/"Telefon" gibi ELDE
+  // OLMAYAN generik isimleri degil. Bizim icin zorunlu olan SADECE Adı
+  // Soyadı ve (Cep Telefonu1/2/3'ten en az biri) - digerleri (iş yeri,
+  // doğum yılı, vergi bilgisi) varsa arama sirasinda ayrica gosterilir
+  // (bkz. randevuDefteriMusteriGoster).
   await sendText(
     from,
     "📥 Excel dosyanızı gönderebilirsiniz.\n\n" +
-      "Dosyada şu sütunlar olmalı (ilk satır başlık satırı olmalı, sütun sırası önemli değil):\n\n" +
-      "• Ad Soyad (zorunlu)\n" +
-      "• Telefon (zorunlu, örn. 0532 123 45 67)\n" +
-      "• Şirket Adı (varsa)\n" +
-      "• Vergi Numarası (varsa)\n" +
-      "• Şirket Türü (varsa)\n" +
-      "• Son Dönem Vergisi (varsa)\n" +
-      "• Yaş (varsa)\n\n" +
+      "Dosyada şu sütunlar tanınır (ilk satır başlık satırı olmalı, sütun sırası önemli değil):\n\n" +
+      "• Adı Soyadı (zorunlu)\n" +
+      "• Cep Telefonu1 / Cep Telefonu2 / Cep Telefonu3 (en az biri zorunlu, örn. 0532 123 45 67)\n" +
+      "• Şirketin Adı (varsa - iş yeri olarak paylaşılır)\n" +
+      "• Doğum Yılı (varsa - yaş buradan otomatik hesaplanır)\n" +
+      "• Ödediği Vergi (varsa)\n" +
+      "• Şirketin Türü, Şirketin Vergi Numarası (varsa, kayıtta tutulur)\n\n" +
       "Hazır olduğunda dosyayı buraya (WhatsApp'tan belge/döküman olarak) gönderebilirsiniz. 📎"
   );
 }
@@ -2894,12 +2900,17 @@ async function randevuDefteriMusteriGoster(from, session, musteri) {
   session.state = "DANISMAN_RANDEVU_DEFTERI_DURUM_SEC";
   session.randevuDefteriSeciliId = musteri.id;
 
+  // 02.08.2026 DUZELTME (Enbel'in talebi): arama scripti icin gosterilen
+  // alanlar SADECE danismanin acikca istedigi bes kalemle sinirlandi - isim
+  // soyisim + telefon (her zaman), varsa is yeri (sirketAdi), varsa dogum
+  // yilindan hesaplanmis yas, varsa odedigi vergi. Eskiden ayrica gosterilen
+  // "Vergi No" ve "Şirket Türü" kaldirildi (danismanin telefonda soylemesi
+  // gereken bilgiler arasinda degildi) - kayitta hala tutuluyor, panelden/
+  // ihtiyac olursa tekrar eklenebilir.
   const satirlar = [`👤 ${musteri.adSoyad}`, `📞 ${musteri.telefon}`];
-  if (musteri.sirketAdi) satirlar.push(`🏢 ${musteri.sirketAdi}`);
-  if (musteri.vergiNumarasi) satirlar.push(`Vergi No: ${musteri.vergiNumarasi}`);
-  if (musteri.sirketTuru) satirlar.push(`Şirket Türü: ${musteri.sirketTuru}`);
-  if (musteri.sonDonemVergisi) satirlar.push(`Son Dönem Vergisi: ${musteri.sonDonemVergisi}`);
-  if (musteri.yas) satirlar.push(`Yaş: ${musteri.yas}`);
+  if (musteri.sirketAdi) satirlar.push(`🏢 İş Yeri: ${musteri.sirketAdi}`);
+  if (musteri.yas) satirlar.push(`🎂 Yaş: ${musteri.yas}`);
+  if (musteri.sonDonemVergisi) satirlar.push(`💰 Ödediği Vergi: ${musteri.sonDonemVergisi}`);
 
   const tekrarNotu =
     (musteri.durum === "yeniden_aranacak" || musteri.durum === "ulasilamadi") && musteri.tekrarArama

@@ -50,14 +50,78 @@ function basligiNormallestir(str) {
     .replace(/[^a-z0-9]/g, ""); // bosluk/noktalama vb. tamamen atilir
 }
 
+// 02.08.2026 DUZELTME (Enbel'in gonderdigi gercek "Referans Listesi Şevval.xlsx"
+// dosyasi incelenerek): danismanlarin bundan sonra gerceke gonderecegi
+// dosyalarda basliklar TAM OLARAK "TC Kimlik Numarası", "Adı Soyadı",
+// "Doğum Yılı", "Cep Telefonu1"/"Cep Telefonu2"/"Cep Telefonu3" (AYNI kisi
+// icin BIRDEN FAZLA telefon adayi - cogu satirda bos, doluysa ilk doluyu
+// kullaniyoruz), "Şirketin Adı", "Şirketin Türü", "Şirketin Vergi Numarası",
+// "Ödediği Vergi" seklinde geliyor. Bu basliklarin coğu eskiden tanimli
+// esanlamlilarla EŞLEŞMİYORDU (orn. "sirketinadi" != "sirketadi",
+// "ceptelefonu1" != "ceptelefonu") - gercek dosyada bu yuzden TELEFON hic
+// eslesmiyor, TUM satirlar "telefon eksik" diye atlaniyordu. Asagidaki liste
+// hem eski (manuel/farkli kaynakli dosyalar icin) hem yeni (gercek üretim
+// kaynagi) basliklari kapsayacak sekilde genisletildi.
 const BASLIK_ESLESTIRME = {
   adSoyad: ["adsoyad", "isimsoyisim", "musteriadi", "adisoyadi", "isim", "ad"],
-  telefon: ["telefon", "telefonnumarasi", "ceptelefonu", "gsm", "numara", "tel", "telefonno"],
-  sirketAdi: ["sirketadi", "sirketismi", "firmaadi", "firmaismi", "sirket", "firma"],
-  vergiNumarasi: ["verginumarasi", "vergino", "vkn", "vergikimlikno", "vergikimliknumarasi"],
-  sirketTuru: ["sirketturu", "firmaturu", "tur", "sirkettipi"],
-  sonDonemVergisi: ["sondonemvergisi", "sondonemvergi", "odenenvergi", "vergitutari", "sondonemodenenvergi"],
-  yas: ["yas", "yasi"]
+  telefon: [
+    "telefon",
+    "telefonnumarasi",
+    "ceptelefonu",
+    "gsm",
+    "numara",
+    "tel",
+    "telefonno",
+    "ceptelefonu1",
+    "ceptelefonu2",
+    "ceptelefonu3",
+    "ceptelefon1",
+    "ceptelefon2",
+    "ceptelefon3",
+    "telefon1",
+    "telefon2",
+    "telefon3",
+    "gsm1",
+    "gsm2",
+    "gsm3"
+  ],
+  sirketAdi: [
+    "sirketadi",
+    "sirketismi",
+    "firmaadi",
+    "firmaismi",
+    "sirket",
+    "firma",
+    "sirketinadi",
+    "sirketinismi",
+    "firmaninadi",
+    "isyeriadi",
+    "isyeri"
+  ],
+  vergiNumarasi: [
+    "verginumarasi",
+    "vergino",
+    "vkn",
+    "vergikimlikno",
+    "vergikimliknumarasi",
+    "sirketinverginumarasi",
+    "sirketvergino",
+    "sirketinvergikimlikno"
+  ],
+  sirketTuru: ["sirketturu", "firmaturu", "tur", "sirkettipi", "sirketinturu"],
+  sonDonemVergisi: [
+    "sondonemvergisi",
+    "sondonemvergi",
+    "odenenvergi",
+    "vergitutari",
+    "sondonemodenenvergi",
+    "odedigivergi",
+    "odedigivergisi"
+  ],
+  yas: ["yas", "yasi"],
+  // 02.08.2026 eklendi: gercek dosyada yas DOGRUDAN verilmiyor, "Doğum Yılı"
+  // olarak geliyor - bkz. asagidaki dogumYilindanYasHesapla.
+  dogumYili: ["dogumyili", "dogumsenesi", "dogduguyil", "dogumtarihi"]
 };
 
 // Bir Excel satirinin (XLSX.utils.sheet_to_json ciktisindaki, orijinal
@@ -66,18 +130,94 @@ const BASLIK_ESLESTIRME = {
 // "0532..."} -> {adSoyad: "Ahmet Yılmaz", telefon: "0532..."}. Es
 // anlamlilardan HICBIRIYLE eslesmeyen sutunlar yoksayilir (ne yazildigi
 // onemli degil, sadece taninanlar isleniyor).
+// 02.08.2026 DUZELTME: bir alan icin BIRDEN FAZLA sutun eslesebilir (orn.
+// "Cep Telefonu1", "Cep Telefonu2", "Cep Telefonu3" hepsi "telefon" alanina
+// esleniyor) - eskiden sadece ILK RASTLANAN sutun kullaniliyordu, o sutun bu
+// satirda BOS olsa bile digerlerine (dolu olabilecek Telefonu2/3'e)
+// BAKILMIYORDU. Artik ayni alana eslenen TUM sutunlar toplaniyor, aralarinda
+// ilk BOS OLMAYAN deger tercih ediliyor (hicbiri dolu degilse ilk sutunun
+// - bos - degeri kullanilir, boylece davranis eskisiyle tutarli kalir).
 function satiriKanonikleAlanlaraCevir(satir) {
-  const sonuc = {};
+  const adaylar = {}; // alan -> [deger, deger, ...] (bu satirda eslesen tum sutunlarin degerleri, sira ile)
   for (const [baslik, deger] of Object.entries(satir)) {
     const normBaslik = basligiNormallestir(baslik);
     for (const [alan, esanlamlilar] of Object.entries(BASLIK_ESLESTIRME)) {
-      if (esanlamlilar.includes(normBaslik) && sonuc[alan] === undefined) {
-        sonuc[alan] = deger;
+      if (esanlamlilar.includes(normBaslik)) {
+        if (!adaylar[alan]) adaylar[alan] = [];
+        adaylar[alan].push(deger);
         break;
       }
     }
   }
+  const sonuc = {};
+  for (const [alan, degerler] of Object.entries(adaylar)) {
+    const ilkDoluDeger = degerler.find((d) => (d || "").toString().trim() !== "");
+    sonuc[alan] = ilkDoluDeger !== undefined ? ilkDoluDeger : degerler[0];
+  }
   return sonuc;
+}
+
+// 02.08.2026 eklendi (Enbel'in talebi): "doğum yılından yaşını hesaplayıp
+// yaşını ... paylaşıp arama yaptırcaz" - dogum YILI (tam tarih degil) verilen
+// bir alandan yasi hesaplar. Excel'den gelen deger sayi (orn. 1996), Date
+// nesnesi (bazi Excel/SheetJS ayarlarinda tarih hucreleri boyle gelebilir)
+// ya da metin (orn. "1996" ya da bir tam tarih icinde gecen yil) olabilir -
+// hepsini tolere eder. Makul bir yil araliginda (1900 - bu yil) degilse ya
+// da hesaplanan yas mantiksiz (negatif ya da 120'den buyuk) cikarsa null
+// doner - "yas bilinmiyor" anlamina gelir, cagiran taraf bu alani hic
+// göstermez (bkz. advisorEngine.js -> randevuDefteriMusteriGoster).
+function dogumYilindanYasHesapla(deger) {
+  if (deger === null || deger === undefined || deger === "") return null;
+  const buYil = new Date().getFullYear();
+  let yil = null;
+  if (deger instanceof Date && !Number.isNaN(deger.getTime())) {
+    yil = deger.getFullYear();
+  } else if (typeof deger === "number" && Number.isFinite(deger)) {
+    if (deger >= 1900 && deger <= buYil) yil = Math.trunc(deger);
+  } else {
+    const metin = deger.toString().trim();
+    const sadeceYil = metin.match(/^(\d{4})$/);
+    if (sadeceYil) {
+      yil = Number(sadeceYil[1]);
+    } else {
+      // "12.05.1996" gibi tam bir tarih icinde gecen 4 haneli yili yakala.
+      const tarihIcindeYil = metin.match(/(\d{4})/);
+      if (tarihIcindeYil) yil = Number(tarihIcindeYil[1]);
+    }
+  }
+  if (yil === null || yil < 1900 || yil > buYil) return null;
+  const yas = buYil - yil;
+  return yas >= 0 && yas <= 120 ? yas : null;
+}
+
+// 02.08.2026 eklendi (Enbel'in talebi): "varsa ödediği vergi bilgisini
+// paylaşıp arama yaptırcaz" - gercek dosyada bu alan TUTARSIZ bicimlerde
+// geliyor: duz sayi (197559.12), "Matrahsız" gibi bir metin (vergi matrahi
+// olmadigi/muaf oldugu anlamina gelir - OLDUGU GIBI gosterilir), ya da
+// bastan/sondan bosluk+yeni satir ve "₺"/binlik nokta/ondalik virgul icheren
+// onceden bicimlendirilmis bir metin (orn. "\n₺7.923,90"). Bu fonksiyon
+// hepsini tek, tutarli bir goruntu bicimine ("₺123.456,78") ceviriyor;
+// ayristiramadigi (beklenmedik) bir metin gelirse, veri kaybetmemek icin
+// sadece bastaki/sondaki bosluklari temizleyip OLDUGU GIBI doner.
+function vergiTutariBicimlendir(deger) {
+  if (deger === null || deger === undefined || deger === "") return null;
+  const paraBicimlendir = (sayi) =>
+    `₺${sayi.toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  if (typeof deger === "number" && Number.isFinite(deger)) {
+    return paraBicimlendir(deger);
+  }
+
+  const metin = deger.toString().trim();
+  if (!metin) return null;
+  if (basligiNormallestir(metin) === "matrahsiz") return "Matrahsız";
+
+  const sayiyaCevrilebilirMetin = metin.replace(/[₺\s]/g, "").replace(/\./g, "").replace(",", ".");
+  const sayi = Number(sayiyaCevrilebilirMetin);
+  if (sayiyaCevrilebilirMetin !== "" && !Number.isNaN(sayi)) {
+    return paraBicimlendir(sayi);
+  }
+  return metin; // taninmayan bir bicim - veri kaybetmemek icin oldugu gibi don
 }
 
 // Buffer'daki (WhatsApp'tan indirilen .xlsx/.xls dosyasi) ilk sayfayi okuyup
@@ -163,8 +303,12 @@ function excelYukle(danismanNumarasi, danismanAdi, buffer, dosyaAdi) {
       return;
     }
 
+    // 02.08.2026 DUZELTME: yas ARTIK sadece dogrudan bir "Yaş" sutunundan
+    // degil, cogu zaman gercek dosyada bulunan "Doğum Yılı" sutunundan da
+    // hesaplanabiliyor - once dogrudan yas denenir (varsa), yoksa dogum
+    // yilindan hesaplanir (bkz. dogumYilindanYasHesapla).
     const yasHam = (kanonik.yas || "").toString().trim();
-    const yas = yasHam && yasGecerliMi(yasHam) ? Number(yasHam) : null;
+    const yas = yasHam && yasGecerliMi(yasHam) ? Number(yasHam) : dogumYilindanYasHesapla(kanonik.dogumYili);
 
     const bosSaKirp = (v) => {
       const s = (v || "").toString().trim();
@@ -182,7 +326,9 @@ function excelYukle(danismanNumarasi, danismanAdi, buffer, dosyaAdi) {
       sirketAdi: bosSaKirp(kanonik.sirketAdi),
       vergiNumarasi: bosSaKirp(kanonik.vergiNumarasi),
       sirketTuru: bosSaKirp(kanonik.sirketTuru),
-      sonDonemVergisi: bosSaKirp(kanonik.sonDonemVergisi),
+      // 02.08.2026 DUZELTME: artik ham metin degil, vergiTutariBicimlendir ile
+      // temizlenmis/tutarli bicimde ("₺123.456,78" ya da "Matrahsız") saklanir.
+      sonDonemVergisi: vergiTutariBicimlendir(kanonik.sonDonemVergisi),
       yas,
       durum: null,
       olumsuzNedeni: null,
