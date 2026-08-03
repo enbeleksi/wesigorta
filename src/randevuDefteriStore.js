@@ -154,6 +154,15 @@ function satiriKanonikleAlanlaraCevir(satir) {
     const ilkDoluDeger = degerler.find((d) => (d || "").toString().trim() !== "");
     sonuc[alan] = ilkDoluDeger !== undefined ? ilkDoluDeger : degerler[0];
   }
+  // 02.08.2026 eklendi (Enbel'in talebi): "bazı müşterilerin birden fazla
+  // numarası var, tamamını paylaşmamız lazım" - "telefon" alani icin YUKARIDA
+  // sadece TEK (ilk dolu) deger sonuc'a kondu, ama danismana TUMUNU
+  // gosterebilmemiz icin bu satirdaki (Cep Telefonu1/2/3 gibi) TUM bos
+  // olmayan telefon adaylarini ayrica saklıyoruz - bkz. excelYukle'deki
+  // kullanimi.
+  sonuc.telefonAdaylari = (adaylar.telefon || [])
+    .map((d) => (d || "").toString().trim())
+    .filter((d) => d !== "");
   return sonuc;
 }
 
@@ -286,19 +295,38 @@ function excelYukle(danismanNumarasi, danismanAdi, buffer, dosyaAdi) {
       return;
     }
 
-    const telefonHam = (kanonik.telefon || "").toString().trim();
-    const normalizeTel = normalizeTelefon(telefonHam);
-    if (!normalizeTel) {
+    // 02.08.2026 DUZELTME (Enbel'in talebi): "bazı müşterilerin birden fazla
+    // numarası var, tamamını paylaşmamız lazım" - artik sadece TEK bir
+    // telefon degil, bu satirda eslesen TUM telefon sutunlarindaki (Cep
+    // Telefonu1/2/3 gibi) gecerli numaralarin HEPSI toplanir ve kayda
+    // eklenir (bkz. asagidaki kayit.telefonlar). Ilk gecerli numara ("telefon"
+    // alani) yine geriye donuk uyumluluk icin birincil/tek numara olarak da
+    // ayrica saklanir (bkz. kayit.telefon).
+    const telefonAdaylariHam =
+      kanonik.telefonAdaylari && kanonik.telefonAdaylari.length
+        ? kanonik.telefonAdaylari
+        : [(kanonik.telefon || "").toString().trim()];
+    const normalizeTelefonlar = [];
+    const buSatirdaGorulmus = new Set();
+    for (const aday of telefonAdaylariHam) {
+      const normalize = normalizeTelefon(aday);
+      if (normalize && !buSatirdaGorulmus.has(normalize)) {
+        buSatirdaGorulmus.add(normalize);
+        normalizeTelefonlar.push(normalize);
+      }
+    }
+
+    if (normalizeTelefonlar.length === 0) {
       atlanan.push({ satirNo, sebep: "Telefon numarası eksik/geçersiz", adSoyad });
       return;
     }
 
-    if (buDosyadaGorulenTelefonlar.has(normalizeTel)) {
+    if (normalizeTelefonlar.some((t) => buDosyadaGorulenTelefonlar.has(t))) {
       atlanan.push({ satirNo, sebep: "Bu dosyada tekrar eden numara", adSoyad });
       return;
     }
 
-    if (numaraBaskaBirKayitaAitMi(normalizeTel)) {
+    if (normalizeTelefonlar.some((t) => numaraBaskaBirKayitaAitMi(t))) {
       atlanan.push({ satirNo, sebep: "Bu numara sistemde zaten kayıtlı (başka bir danışmanda olabilir)", adSoyad });
       return;
     }
@@ -322,7 +350,8 @@ function excelYukle(danismanNumarasi, danismanAdi, buffer, dosyaAdi) {
       danismanNumarasi,
       danismanAdi: danismanAdi || null,
       adSoyad,
-      telefon: normalizeTel,
+      telefon: normalizeTelefonlar[0], // birincil/tek numara (geriye donuk uyumluluk icin)
+      telefonlar: normalizeTelefonlar, // TUM gecerli numaralar (bkz. advisorEngine.js -> randevuDefteriMusteriGoster)
       sirketAdi: bosSaKirp(kanonik.sirketAdi),
       vergiNumarasi: bosSaKirp(kanonik.vergiNumarasi),
       sirketTuru: bosSaKirp(kanonik.sirketTuru),
@@ -340,8 +369,15 @@ function excelYukle(danismanNumarasi, danismanAdi, buffer, dosyaAdi) {
     };
 
     kayitlar.set(id, kayit);
-    telefonIndex.set(normalizeTel, id);
-    buDosyadaGorulenTelefonlar.add(normalizeTel);
+    // 02.08.2026 DUZELTME: telefonIndex'e ARTIK bu musterinin TUM
+    // numaralari kaydediliyor (sadece birincisi degil) - boylece "aynı
+    // numarayı iki farklı danışman aramasın" kurali (bkz. dosya basindaki
+    // NOT), musterinin ikinci/ucuncu numarasi baska bir dosyada/danismanda
+    // karsimiza ciktiginda da dogru calisir.
+    normalizeTelefonlar.forEach((t) => {
+      telefonIndex.set(t, id);
+      buDosyadaGorulenTelefonlar.add(t);
+    });
     eklenen.push(kayit);
   });
 
@@ -381,6 +417,7 @@ function manuelKayitOlustur(danismanNumarasi, danismanAdi, adSoyad, telefonHam) 
     danismanAdi: danismanAdi || null,
     adSoyad: adSoyadTemiz,
     telefon: normalizeTel,
+    telefonlar: [normalizeTel], // Excel'deki cok-numarali kayitlarla AYNI sekil - tek elemanli
     sirketAdi: null,
     vergiNumarasi: null,
     sirketTuru: null,
@@ -511,6 +548,31 @@ function yanlisNumaraIsaretle(id) {
   return kayit;
 }
 
+// 02.08.2026 eklendi (Enbel'in talebi): "müşterinin birden fazla numarası
+// varsa bunlardan hangisinin müşteriye ait olduğunu sor ve diğerlerini
+// sistemden silelim" - GORUSME OLUMLU sonuclandiginda (yani danisman
+// GERCEKTEN musteriyle konustuysa) hangi numaradan ulastigini soruyoruz
+// (bkz. advisorEngine.js -> randevuDefteriDogruNumaraSor), bu fonksiyon da
+// SECILEN numara disindaki digerlerini hem kayittan hem de GLOBAL
+// telefonIndex'ten siler - boylece o numaralar "bu musteriye ait, bir daha
+// kimseye onerilmesin" diye BOSUNA bloklanmaz, ileride baska bir musterinin
+// gercek numarasi olarak sisteme girilebilir.
+function dogruNumarayiSec(id, seciliTelefon) {
+  const kayit = kayitlar.get(id);
+  if (!kayit) return null;
+  const tumNumaralar = Array.isArray(kayit.telefonlar) && kayit.telefonlar.length ? kayit.telefonlar : [kayit.telefon];
+  if (!tumNumaralar.includes(seciliTelefon)) return null; // beklenmedik bir numara - dokunma
+  tumNumaralar
+    .filter((t) => t !== seciliTelefon)
+    .forEach((t) => {
+      if (telefonIndex.get(t) === id) telefonIndex.delete(t);
+    });
+  kayit.telefon = seciliTelefon;
+  kayit.telefonlar = [seciliTelefon];
+  kayit.guncellenmeZamani = Date.now();
+  return kayit;
+}
+
 // --- Hatirlatma zamanlayicisi (server.js'den cagirilir - leadStore'daki
 // hatirlatma sistemiyle AYNI "basarisiz olursa esige kadar tekrar dene, o
 // zaman da pes edip sessizce isaretle" mantigi) ---
@@ -567,13 +629,17 @@ function randevuHatirlatmaDenemeBasarisiz(id, pesGecMi) {
 
 // --- Kalicilik (db.js araciligiyla) ---
 // telefonIndex BILEREK ayrica kaydedilmiyor - yukle() sirasinda kayitlar'in
-// telefon alanindan yeniden turetiliyor (tek dogru kaynak kayitlar'dir).
+// telefon(lar) alanindan yeniden turetiliyor (tek dogru kaynak kayitlar'dir).
 async function yukle() {
   const veri = await db.oku("randevuDefteri");
   if (veri) {
     Object.entries(veri).forEach(([id, kayit]) => {
       kayitlar.set(id, kayit);
-      if (kayit.telefon) telefonIndex.set(kayit.telefon, id);
+      // 02.08.2026 DUZELTME: bu degisiklikten ONCE kaydedilmis eski kayitlarda
+      // "telefonlar" dizisi olmayabilir (sadece tekil "telefon" alani vardi) -
+      // ikisini de destekleyip TUM numaralari indexe ekliyoruz.
+      const numaralar = Array.isArray(kayit.telefonlar) && kayit.telefonlar.length ? kayit.telefonlar : [kayit.telefon];
+      numaralar.filter(Boolean).forEach((t) => telefonIndex.set(t, id));
     });
     console.log(`${Object.keys(veri).length} randevu defteri kaydı veritabanından yüklendi.`);
   }
@@ -595,6 +661,7 @@ module.exports = {
   olumsuzIsaretle,
   tekrarAramaIsaretle,
   yanlisNumaraIsaretle,
+  dogruNumarayiSec,
   zamaniGelenTekrarAramaHatirlatmalari,
   tekrarAramaHatirlatmaGonderildiIsaretle,
   tekrarAramaHatirlatmaDenemeBasarisiz,

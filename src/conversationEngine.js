@@ -206,6 +206,150 @@ function nextValidIndex(flow, answers, fromIndex) {
   return idx;
 }
 
+// --- Beklenmedik (istenmeden/sorulmadan) gonderilen arac belgesi (ruhsat YA
+// DA proforma) (03.08.2026 eklendi, Enbel'in talebi - proforma destegi de
+// AYNI GUN icinde "aynısını proforma için de uygulayabilir miyiz?" talebiyle
+// eklendi) ---
+// Herhangi bir musteri YA DA danisman, aktif bir soru/belge akisi
+// beklemiyorken (yani "hicbir sey yazmadan") dogrudan bir arac ruhsati YA DA
+// proforma belgesi gonderirse, bunu Claude'un gorsel/dokuman analiziyle
+// taniyip Trafik/Kasko/Ikisi de sorusunu soruyoruz, ardindan ilgili urun
+// akisini belgeden okunan bilgilerle ONCEDEN DOLDURULMUS sekilde
+// baslatiyoruz - boylece musteri/danisman belgede zaten yazan marka/model/
+// motor no/sasi no/plaka gibi bilgileri TEKRAR yazmak zorunda kalmiyor,
+// sadece belgede OLMAYAN bilgiler (sehir, meslek, danisman gorustu mu vb.)
+// soruluyor. Ruhsat ikinci el araci, proforma sifir araci gosterdigi icin
+// "arac_sifir_mi" sorusu da otomatik (ruhsatsa "İkinci El", proformaysa
+// "Sıfır") isaretlenip hic sorulmuyor.
+// Bu yardimci fonksiyonlar HEM conversationEngine.js'in kendi media
+// isleyicisinde HEM DE advisorEngine.js'in kendi media isleyicisinde (bkz. o
+// dosyadaki AYNI mantiga sahip blok) kullaniliyor - tek yerden yazilip iki
+// tarafin da ayni sekilde davranmasini garantiliyor (bkz. module.exports
+// sonundaki aciklama).
+const ARAC_BELGESI_URUN_SEC_SECENEKLERI = ["Trafik", "Kasko", "İkisi de"];
+
+// Ruhsat fotografini analiz etmeyi dener - GERCEKTEN okunabilir bir ruhsat
+// ise sonucu doner, degilse (Claude "okunabilir: false" derse) YA DA analiz
+// herhangi bir sebeple basarisiz olursa (orn. ANTHROPIC_API_KEY tanimli
+// degil, agin sorunlu olmasi) null doner.
+async function beklenmedikRuhsatDeneVeAnalizEt(buffer, mimeType) {
+  try {
+    const sonuc = await ruhsatFotografiAnalizEt(buffer, mimeType);
+    return sonuc && sonuc.okunabilir ? sonuc : null;
+  } catch (err) {
+    console.error(
+      "Beklenmedik ruhsat foto analizi basarisiz (sessizce eski davranisa dusuluyor):",
+      err?.response?.data || err.message
+    );
+    return null;
+  }
+}
+
+// proformaAnalizEt'in beklenmedikRuhsatDeneVeAnalizEt ile AYNI mantiga sahip
+// esdegeri - tek fark proforma hem fotograf hem PDF olarak gelebilir
+// (proformaAnalizEt zaten ikisini de destekliyor, bkz. o dosya).
+async function beklenmedikProformaDeneVeAnalizEt(buffer, mimeType) {
+  try {
+    const sonuc = await proformaAnalizEt(buffer, mimeType);
+    return sonuc && sonuc.okunabilir ? sonuc : null;
+  } catch (err) {
+    console.error(
+      "Beklenmedik proforma belge analizi basarisiz (sessizce eski davranisa dusuluyor):",
+      err?.response?.data || err.message
+    );
+    return null;
+  }
+}
+
+// Gelen belgenin ruhsat mi yoksa proforma mi oldugunu bilmedigimiz icin
+// ikisini de dener - ONCE ruhsat (SADECE fotografsa, ruhsatAnaliz.js PDF icin
+// tasarlanmadi), SONRA (ruhsat taninmadiysa ya da belge PDF ise) proforma.
+// Biri "okunabilir: true" donerse hemen { tur, sonuc } seklinde doner, ikisi
+// de basarisiz/okunamazsa null doner - null donmesi, cagiran tarafin
+// SESSIZCE eski/genel davranisina (orn. "su an fotograf beklemiyoruz" ya da
+// "araç satış sözleşmesi" kontrolu) dusmesi gerektigi anlamina gelir - bu
+// yeni ozellik mevcut davranisi ASLA bozmamali.
+async function beklenmedikAracBelgesiDeneVeAnalizEt(buffer, mimeType) {
+  const pdfMi = mimeType === "application/pdf";
+  if (!pdfMi) {
+    const ruhsatSonuc = await beklenmedikRuhsatDeneVeAnalizEt(buffer, mimeType);
+    if (ruhsatSonuc) return { tur: "ruhsat", sonuc: ruhsatSonuc };
+  }
+  const proformaSonuc = await beklenmedikProformaDeneVeAnalizEt(buffer, mimeType);
+  if (proformaSonuc) return { tur: "proforma", sonuc: proformaSonuc };
+  return null;
+}
+
+// Beklenmedik belge tespit edildiginde danismana/musteriye gonderilen sorunun
+// basindaki tanitim cumlesi - belge turune gore degisir.
+const ARAC_BELGESI_TANITIM_CUMLESI = {
+  ruhsat: "Bir araç ruhsatı fotoğrafı aldım! 🚗📋",
+  proforma: "Bir proforma belgesi aldım! 🚗📋"
+};
+
+// Verilen answers nesnesini (session.answers ya da danismanYeniAnswers -
+// ikisi de duz JS nesnesi oldugu icin ayni fonksiyon calisir) ruhsat OCR
+// sonucundaki bilgilerle doldurur. Ruhsat gonderildigi icin arac kesinlikle
+// ikinci eldir (sifir bir aracin henuz ruhsati/plakasi olmaz) - bu yuzden
+// arac_sifir_mi dogrudan "İkinci El" olarak isaretleniyor (soru hic
+// sorulmuyor). ruhsat_belgesi de true isaretleniyor ki flow'un kendi
+// "ruhsat fotografini paylasir misiniz" sorusu TEKRAR sorulmasin (fotografi
+// zaten aldik).
+function ruhsatOCRSonucundanAnswersDoldur(answers, sonuc) {
+  answers.arac_sifir_mi = "İkinci El";
+  answers.ruhsat_belgesi = true;
+  if (sonuc.plaka) answers.plaka = sonuc.plaka;
+  if (sonuc.marka) answers.marka = sonuc.marka;
+  if (sonuc.model) answers.model = sonuc.model;
+  if (sonuc.motorNo) answers.motor_no = sonuc.motorNo;
+  if (sonuc.sasiNo) answers.sasi_no = sonuc.sasiNo;
+  if (sonuc.adSoyad) answers.ruhsat_ad_soyad = sonuc.adSoyad;
+  if (sonuc.tcKimlik && tcKimlikGecerliMi(sonuc.tcKimlik)) answers.tc_kimlik = sonuc.tcKimlik;
+}
+
+// ruhsatOCRSonucundanAnswersDoldur ile AYNI mantik, proforma icin - proforma
+// gonderildigi icin arac kesinlikle sifirdir (musteri henuz tescil edilmemis
+// bir aracin ruhsatini gonderemez) - arac_sifir_mi "Sıfır" olarak
+// isaretlenir. Proformada GENELLIKLE plaka/TC kimlik YER ALMAZ (bkz.
+// proformaAnaliz.js'teki yorum) - bu yuzden bu iki alan cogunlukla null
+// gelir ve flow'un kendi fallback sorulariyla (PLAKA_FALLBACK_SORU sadece
+// ikinci el icin sorulur, TC_KIMLIK_ISIMLE_SORU her zaman) tamamlanir.
+function proformaOCRSonucundanAnswersDoldur(answers, sonuc) {
+  answers.arac_sifir_mi = "Sıfır";
+  answers.proforma_belgesi = true;
+  if (sonuc.marka) answers.marka = sonuc.marka;
+  if (sonuc.model) answers.model = sonuc.model;
+  if (sonuc.motorNo) answers.motor_no = sonuc.motorNo;
+  if (sonuc.sasiNo) answers.sasi_no = sonuc.sasiNo;
+  if (sonuc.modelYili) answers.model_yili = sonuc.modelYili;
+  if (sonuc.adSoyad) answers.proforma_ad_soyad = sonuc.adSoyad;
+  if (sonuc.tcKimlik && tcKimlikGecerliMi(sonuc.tcKimlik)) answers.tc_kimlik = sonuc.tcKimlik;
+  if (sonuc.plaka) answers.plaka = sonuc.plaka;
+}
+
+// beklenmedikAracBelgesiDeneVeAnalizEt'in donen { tur, sonuc } sonucunu
+// dogru doldurma fonksiyonuna yonlendiren tek giris noktasi - cagiran
+// tarafin (conversationEngine.js/advisorEngine.js media isleyicileri)
+// "ruhsat mi proforma mi" ayrimini kendisi yapmasina gerek kalmiyor.
+function aracBelgesiOCRSonucundanAnswersDoldur(answers, tur, sonuc) {
+  if (tur === "proforma") {
+    proformaOCRSonucundanAnswersDoldur(answers, sonuc);
+  } else {
+    ruhsatOCRSonucundanAnswersDoldur(answers, sonuc);
+  }
+}
+
+// Beklenmedik belge okununca ekBelgeler/danismanYeniEkBelgeler'e eklenecek
+// dosya kaydini olusturur - mevcut in-flow belge isleyicisiyle (bkz.
+// handleIncoming'deki "belge" tipi soru islemcisi) AYNI dosya adi
+// kuralini kullanir (proforma PDF olarak da gelebilir, ruhsat SADECE
+// fotograf).
+function aracBelgesiEkBelgeKaydiOlustur(tur, mimeType, veriBase64) {
+  const dosyaAdi =
+    tur === "proforma" ? (mimeType === "application/pdf" ? "proforma.pdf" : "proforma.jpg") : "ruhsat.jpg";
+  return { dosyaAdi, mimeType, veriBase64 };
+}
+
 // Bir urunun soru akisini baslatir. Musterinin adi zaten biliniyorsa (session.name)
 // ve o urunun ad_soyad sorusu hesap sahibinin kendi adini soruyorsa (sameAsAccountHolder),
 // bu soruyu tekrar sormadan otomatik doldurur. Urunun "intro" metni varsa,
@@ -234,7 +378,14 @@ const MUSTERI_SATIS_URUN_TIPLERI = { hayat: "hayat", bes: "bes_yeni_is" };
 // Donus degeri: true ise cagiran taraf askCurrentQuestion'i AYRICA
 // COGIRMAMALI - advisorEngine'e devredilen bir akista ilk soru zaten
 // gonderilmis oluyor.
-async function startProductFlow(from, session, productKey, { skipIntro = false } = {}) {
+// onceDenAnswers: 03.08.2026 eklendi - beklenmedik ruhsat/proforma +
+// "İkisi de" (Trafik VE Kasko birden) akisinda, ikinci urunun sorularina
+// baslarken BIRINCI urunde zaten toplanmis ortak cevaplari (arac bilgileri,
+// ad soyad, sehir, meslek, danisman gorustu mu vb.) sifirlamadan devam
+// ettirebilmek icin - verilirse session.answers bu nesneyle baslatilir (bos
+// {} yerine), boylece nextValidIndex zaten cevaplanmis sorulari otomatik
+// atlar (bkz. finishFlow sonundaki "aracBelgesiIkisiDeSonrakiUrun" kontrolu).
+async function startProductFlow(from, session, productKey, { skipIntro = false, onceDenAnswers = null } = {}) {
   if (MUSTERI_SATIS_URUN_TIPLERI[productKey]) {
     const advisorEngine = require("./advisorEngine");
     await advisorEngine.musteriSatisBaslat(from, session, MUSTERI_SATIS_URUN_TIPLERI[productKey]);
@@ -243,10 +394,10 @@ async function startProductFlow(from, session, productKey, { skipIntro = false }
 
   const flow = flows[productKey];
   session.product = productKey;
-  session.answers = {};
+  session.answers = onceDenAnswers || {};
 
   const adSoyadQuestion = flow.questions.find((q) => q.id === "ad_soyad");
-  if (session.name && adSoyadQuestion && adSoyadQuestion.sameAsAccountHolder) {
+  if (session.name && adSoyadQuestion && adSoyadQuestion.sameAsAccountHolder && !session.answers.ad_soyad) {
     session.answers.ad_soyad = session.name;
   }
 
@@ -918,6 +1069,49 @@ async function handleIncoming(from, message) {
     const fotoKabulEdilir = currentQuestion && (currentQuestion.type === "coklu_foto" || belgeSorusuMu);
 
     if (!fotoKabulEdilir) {
+      // 03.08.2026 eklendi (Enbel'in talebi, ayni gun proforma destegi de
+      // eklendi): aktif bir soru/akis beklemiyorken (yani "hicbir sey
+      // yazmadan") gonderilen bir belge, GERCEKTEN okunabilir bir arac
+      // ruhsati YA DA proforma belgesi ise - kaba/genel red mesaji yerine
+      // Trafik/Kasko/Ikisi de sorusunu sorup belgeden okunan bilgilerle
+      // ONCEDEN DOLDURULMUS bir talep akisi baslatiyoruz (bkz. yukaridaki
+      // beklenmedikAracBelgesiDeneVeAnalizEt/aracBelgesiOCRSonucundanAnswersDoldur
+      // ve asagidaki "ARAC_BELGESI_URUN_SEC" case'i). SADECE aktif bir soru
+      // dizisi (ASKING) icinde DEGILKEN devreye giriyor - mevcut bir urunun
+      // ortasinda (orn. sehir sorulurken) beklenmedik bir belge gelirse o
+      // akisi bozmamak icin eski genel red mesaji gosterilmeye devam eder.
+      const belgeTuruUygunMu =
+        message.mimeType && (message.mimeType.startsWith("image/") || message.mimeType === "application/pdf");
+      if (session.state !== "ASKING" && belgeTuruUygunMu) {
+        try {
+          const { buffer, mimeType } = await mediaIndir(message.mediaId);
+          const gercekMime = message.mimeType || mimeType;
+          const belgeSonucu = await beklenmedikAracBelgesiDeneVeAnalizEt(buffer, gercekMime);
+          if (belgeSonucu) {
+            session.beklenmedikAracBelgesiVeri = {
+              tur: belgeSonucu.tur,
+              sonuc: belgeSonucu.sonuc,
+              veriBase64: buffer.toString("base64"),
+              mimeType: gercekMime
+            };
+            session.state = "ARAC_BELGESI_URUN_SEC";
+            const tanitim = ARAC_BELGESI_TANITIM_CUMLESI[belgeSonucu.tur];
+            await sendList(
+              from,
+              `${tanitim} Bu araç için Trafik Sigortası mı, Kasko mu, yoksa ikisini birden mi hazırlamamızı istersiniz?`,
+              "Ürün Seç",
+              ARAC_BELGESI_URUN_SEC_SECENEKLERI
+            );
+            return;
+          }
+        } catch (err) {
+          console.error(
+            "Beklenmedik arac belgesi kontrolu basarisiz (eski genel red mesajina dusuluyor):",
+            err?.response?.data || err.message
+          );
+        }
+      }
+
       await sendText(
         from,
         "Şu an bir fotoğraf beklemiyoruz, iletmek istediğiniz bilgiyi yazılı olarak paylaşabilir misiniz? 🙏"
@@ -1237,6 +1431,48 @@ async function handleIncoming(from, message) {
   switch (session.state) {
     case "NEW": {
       await baslaYeniKonusma(from, session, userText);
+      break;
+    }
+
+    // 03.08.2026 eklendi: beklenmedik (sorulmadan gonderilen) bir ruhsat/
+    // proforma belgesi taninip Trafik/Kasko/Ikisi de sorusu soruldugunda
+    // gelen cevabi isler (bkz. yukaridaki media isleyicisindeki tetikleme).
+    case "ARAC_BELGESI_URUN_SEC": {
+      const secilen = matchOption(userText, ARAC_BELGESI_URUN_SEC_SECENEKLERI);
+      if (!secilen) {
+        await sendList(
+          from,
+          "Lütfen listeden bir seçenek seçer misiniz? 🙏",
+          "Ürün Seç",
+          ARAC_BELGESI_URUN_SEC_SECENEKLERI
+        );
+        break;
+      }
+
+      const veri = session.beklenmedikAracBelgesiVeri;
+      session.beklenmedikAracBelgesiVeri = null;
+      const oncelikliUrun = secilen === "Kasko" ? "kasko" : "trafik";
+      const answers = {};
+      if (veri) {
+        aracBelgesiOCRSonucundanAnswersDoldur(answers, veri.tur, veri.sonuc);
+        if (!session.ekBelgeler) session.ekBelgeler = [];
+        session.ekBelgeler.push(aracBelgesiEkBelgeKaydiOlustur(veri.tur, veri.mimeType, veri.veriBase64));
+      }
+
+      // "İkisi de" secilirse once Trafik'i (kasko capraz satis sorusu
+      // "Evet" olarak onceden isaretlenmis sekilde, tekrar sorulmasin diye)
+      // tamamlatiyoruz, Trafik bitince finishFlow otomatik olarak Kasko'nun
+      // SADECE henuz cevaplanmamis sorularini sormaya devam ediyor (bkz.
+      // finishFlow sonundaki "aracBelgesiIkisiDeSonrakiUrun" kontrolu).
+      if (secilen === "İkisi de") {
+        answers.kasko_talebi = "Evet";
+        session.aracBelgesiIkisiDeSonrakiUrun = "kasko";
+      } else {
+        session.aracBelgesiIkisiDeSonrakiUrun = null;
+      }
+
+      const devredildi = await startProductFlow(from, session, oncelikliUrun, { onceDenAnswers: answers });
+      if (!devredildi) await askCurrentQuestion(from, session);
       break;
     }
 
@@ -1674,6 +1910,22 @@ async function askCurrentQuestion(from, session) {
   const flow = flows[session.product];
   const q = flow.questions[session.questionIndex];
 
+  // 03.08.2026 eklendi: beklenmedik ruhsat/proforma ile onceden doldurulmus
+  // (onceDenAnswers) bir akiste, TUM sorular ya OCR'dan ya da skipIf ile
+  // zaten cevaplanmis/atlanmis olabilir (orn. proforma -> arac_sifir_mi
+  // "Sıfır" -> Kasko'nun kasko_durumu/arac_fotograflari sorulari da otomatik
+  // atlanir) - bu durumda sorulacak GERCEKTEN hicbir soru kalmamis olabilir.
+  // Boyle bir durumda q undefined olur (flow.questions[index] dizi disina
+  // tasar) - eskiden bu asla olmuyordu (startProductFlow'dan hemen sonra
+  // askCurrentQuestion cagiran her yerde en az bir soru - orn.
+  // danisman_gorustu_mu - hep bekliyordu), simdi cagiran tarafin bunu ayrica
+  // kontrol etmesini beklemek yerine burada guvenli sekilde finishFlow'a
+  // dusuyoruz.
+  if (!q) {
+    await finishFlow(from, session);
+    return;
+  }
+
   // "aile_dongu" tipi soruya ILK defa gelindiginde ic durum makinesini
   // baslatiyoruz (bkz. saglikAileSorusunuSor/saglikAileCevabiIsle'in
   // ustundeki genis yorum) - gercek metin/secenekler bu ozel fonksiyondan
@@ -1848,6 +2100,24 @@ async function finishFlow(from, session) {
       telefon: from,
       ozetSatirlari: mailSatirlari
     }).catch((err) => console.error("Garanti Emeklilik maili gonderilirken beklenmeyen hata:", err.message));
+  }
+
+  // 03.08.2026 eklendi: beklenmedik ruhsat/proforma + "İkisi de" (Trafik VE
+  // Kasko birden) akisinda, Trafik'in talebi az once yukarida
+  // olusturulduktan hemen sonra otomatik olarak Kasko'nun
+  // (session.aracBelgesiIkisiDeSonrakiUrun ile isaretlenmis urunun) SADECE
+  // henuz cevaplanmamis sorularini sormaya devam ediyoruz - ortak cevaplar
+  // (arac bilgileri, ad soyad, danisman gorustu mu, sehir, meslek, tc kimlik
+  // vb.) session.answers uzerinden aynen tasindigi icin nextValidIndex
+  // bunlari otomatik atlar, sadece Kasko'ya ozel yeni sorular (kasko_durumu/
+  // arac_fotograflari) sorulur. Kasko'nun kendi finishFlow'u calistiginda bu
+  // alan artik null oldugu icin sonsuz donguye girmez.
+  if (session.aracBelgesiIkisiDeSonrakiUrun) {
+    const sonrakiUrun = session.aracBelgesiIkisiDeSonrakiUrun;
+    session.aracBelgesiIkisiDeSonrakiUrun = null;
+    const devamEdenAnswers = { ...session.answers };
+    const devredildi = await startProductFlow(from, session, sonrakiUrun, { onceDenAnswers: devamEdenAnswers });
+    if (!devredildi) await askCurrentQuestion(from, session);
   }
 }
 
@@ -2102,6 +2372,17 @@ module.exports = {
   guvenlikAgiNumaralari,
   resolveAgentNumber,
   sablonParametresiIcinTemizle,
+  // 03.08.2026 eklendi: beklenmedik (sorulmadan gonderilen) ruhsat/proforma
+  // belgesi ozelligi - advisorEngine.js'in KENDI media isleyicisinde
+  // (danismanin idle/bos seviyede gonderdigi belge) AYNI OCR-analiz-ve-
+  // doldurma mantigini kullanabilmesi icin disari aciliyor - bkz. o
+  // dosyadaki "DANISMAN_ARAC_BELGESI_URUN_SEC" case'i ve ilgili media
+  // isleyici blogu.
+  beklenmedikAracBelgesiDeneVeAnalizEt,
+  aracBelgesiOCRSonucundanAnswersDoldur,
+  aracBelgesiEkBelgeKaydiOlustur,
+  ARAC_BELGESI_TANITIM_CUMLESI,
+  ARAC_BELGESI_URUN_SEC_SECENEKLERI,
   // 28.07.2026 eklendi: danismanin musteri adina WhatsApp'tan yeni talep
   // olusturdugu akis (advisorEngine.js -> DANISMAN_YENI_SORU), Trafik/Kasko'nun
   // "belge" (proforma/ruhsat OCR) ve Ozel Saglik/TSS'nin "aile_dongu" (esin/

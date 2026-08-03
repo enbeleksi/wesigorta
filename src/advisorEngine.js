@@ -53,6 +53,7 @@ const {
   adSoyadGecerliMi,
   telefonGecerliMi,
   telefonUluslararasiFormata,
+  telefonYerelBicimGoster,
   epostaGecerliMi,
   primTutariGecerliMi,
   saatAraligiGecerliMi,
@@ -1053,6 +1054,21 @@ const YONETICI_NUMARALARI = DANISMANLAR.filter((d) => d.name === "Enbel" || d.na
 // kaynak) ayni numarayi burada da turetiyoruz.
 const ENBEL_NUMARASI = (DANISMANLAR.find((d) => d.name === "Enbel") || {}).number || "905326876126";
 
+// 03.08.2026 eklendi (Enbel'in kendi talebi): "Bekleyen İş"/"Gecikmiş İş"
+// menusunden WhatsApp uzerinden sorulunca ARTIK SADECE Enbel'in KENDI isleri
+// gorunsun, ekibin TAMAMI gorunmesin - bu degisiklik SADECE bu iki menuyu
+// (anaMenuGoster/gecikmisIsMenuGoster) etkiler. Sabah 09:30 gunluk ozetinde
+// (bkz. server.js -> gunlukBekleyenIsOzetiKontrolEt) Enbel'e hem kendi hem
+// ekibin TÜM bekleyen isleri HALA (degismeden) gonderiliyor - kullanicinin
+// acik talebi buydu ("sabahki raporlarda tüm ekibinki de gelsin"), o kod
+// yolu YONETICI_NUMARALARI'na hic bakmiyor, ayrica etkilenmedi. Bahadır ise
+// (elementer bransin sorumlusu oldugu icin) bu iki menude HALA ekibin
+// TAMAMINI goruyor - bu degisiklik SADECE Enbel icin istendi, YONETICI_NUMARALARI
+// sabitinin kendisi (not ekleme/numara engelleme gibi BASKA yetkiler icin
+// kullanildigindan) DEGISTIRILMEDI, sadece bu iki menu ayrica dar bir liste
+// kullaniyor.
+const BEKLEYEN_IS_TUM_EKIP_GOREBILEN_NUMARALAR = YONETICI_NUMARALARI.filter((n) => n !== ENBEL_NUMARASI);
+
 // --- Turkce karakter toleransli secenek eslestirme (conversationEngine.js'deki
 // ile ayni mantik, kucuk oldugu icin burada ayrica tanimlandi) ---
 function normalizeTr(str) {
@@ -1220,6 +1236,30 @@ const RANDEVU_DEFTERI_DURUM_SECENEKLERI = [
   "Yanlış Numara"
 ];
 
+// 03.08.2026 eklendi (Enbel'in talebi): "danışman referans aramaya
+// başladıktan sonra danışman yeterli diyene kadar her işaretlemeden sonra
+// yeni referans gönderelim" - danisman "Referans Ara" moduna girdiginde,
+// artik her sonuc isaretlemesinden (Olumlu/Olumsuz/Yeniden Aranacak/
+// Ulaşılamadı/Yanlış Numara) SONRA ana menuye donmek yerine OTOMATIK olarak
+// bir SONRAKI musteri gosteriliyor (bkz. asagidaki randevuDefteriMusteriAra
+// cagrilari) - boylece pespese 50 numara aramasi gereken bir danisman her
+// seferinde "Referans Ara"ya tekrar tekrar basmak zorunda kalmiyor. Bu
+// dongude iken danisman istedigi an "yeterli" (ya da "yeter"/"dur"/"bu
+// kadar"/"bitti" gibi bir varyasyon) yazarak ana menuye donebilir - TAM
+// eslesme aranir (^...$ ile) ki bir Olumsuz aciklamasi gibi SERBEST METIN
+// icinde gecebilecek "yeterli" kelimesiyle (orn. "ürünü yeterli bulmadı")
+// YANLISLIKLA karismasin; bu yuzden bu kontrol SADECE asagidaki iki "kisa
+// secim" durumunda (DURUM_SEC / DOGRU_NUMARA_SEC) calisiyor, serbest metin
+// beklenen durumlarda (Olumsuz aciklamasi, tekrar arama tarihi vb.) DEGIL.
+const REFERANS_ARAMA_DURDURMA_REGEX =
+  /^(yeterli|yeter|dur|durdur|bu\s*kadar(\s*yeter)?|tamam\s*yeter|bitti|bitirdim)[\s!.,😊🙏👍🎉]*$/i;
+
+async function referansAramaDurduruldu(from, session) {
+  await sendText(from, "Tamam, aramaya burada ara verelim 👍 İstediğiniz zaman \"Referans Ara\" diyerek devam edebilirsiniz.");
+  session.randevuDefteriSeciliId = null;
+  await randevuDefteriMenuGoster(from, session);
+}
+
 async function karsilamaGoster(from, session) {
   const danisman = danismaniBul(from);
   // 28.07.2026 eklendi: isimden sonra "Bey"/"Hanım" hitabi (kullanicinin talebi).
@@ -1283,8 +1323,11 @@ function gecikmisYenilemeMi(lead) {
 // --- Mevcut talepleri listeleme/yonetme ---
 async function anaMenuGoster(from, session) {
   const danisman = danismaniBul(from);
-  const yoneticiMi = YONETICI_NUMARALARI.includes(from);
-  // Yonetici (Bahadır/Enbel) icin TUM ekibin acik isleri, digerleri icin
+  // 03.08.2026 DUZELTILDI: eskiden burada YONETICI_NUMARALARI (Enbel+Bahadır)
+  // kullanilirdi - Enbel'in kendi talebi uzerine artik BEKLEYEN_IS_TUM_EKIP_GOREBILEN_NUMARALAR
+  // kullaniliyor (sadece Bahadır) - bkz. o sabitin yorumu.
+  const yoneticiMi = BEKLEYEN_IS_TUM_EKIP_GOREBILEN_NUMARALAR.includes(from);
+  // Yonetici (Bahadır) icin TUM ekibin acik isleri, digerleri icin
   // sadece kendi acik isleri (bkz. yukaridaki YONETICI_NUMARALARI yorumu).
   // 02.08.2026 eklendi: yenileme kaynakli, suresi coktan dolmus (gecikmisYenilemeMi)
   // kayitlar artik BURADA GOSTERILMIYOR - "Gecikmiş İş" menusune tasindi
@@ -1352,7 +1395,10 @@ async function anaMenuGoster(from, session) {
 // secim yapiliyormus gibi yanlis bir kayda dusulmesi (state karismasi)
 // engellenir.
 async function gecikmisIsMenuGoster(from, session) {
-  const yoneticiMi = YONETICI_NUMARALARI.includes(from);
+  // 03.08.2026 DUZELTILDI: anaMenuGoster ile AYNI degisiklik (bkz. o
+  // sabitin/fonksiyonun yorumu) - Enbel artik burada da SADECE kendi
+  // gecikmis islerini goruyor, Bahadır ekibin tamamini gormeye devam ediyor.
+  const yoneticiMi = BEKLEYEN_IS_TUM_EKIP_GOREBILEN_NUMARALAR.includes(from);
   const tumGecikmisLeadler = leadStore
     .tumLeadleriGetir()
     .filter((l) => (yoneticiMi ? true : l.danismanNumarasi === from) && l.durum === "Açık" && gecikmisYenilemeMi(l));
@@ -2178,6 +2224,19 @@ async function danismanSoruSor(from, session) {
   const flow = flows[session.danismanYeniUrunKey];
   const soru = flow.questions[session.danismanYeniSoruIndex];
 
+  // 03.08.2026 eklendi: beklenmedik ruhsat/proforma ile onceden doldurulmus
+  // bir danisman-yeni-talep akisinda (bkz. conversationEngine.js'teki
+  // askCurrentQuestion'a eklenen AYNI mantigin yorumu), TUM sorular zaten
+  // cevaplanmis/atlanmis olabilir (orn. proforma -> arac_sifir_mi "Sıfır" ->
+  // Kasko'nun kasko_durumu/arac_fotograflari sorulari da otomatik atlanir,
+  // "İkisi de" akisinda Kasko'ya gecildiginde sorulacak hicbir soru
+  // kalmayabilir) - bu durumda soru undefined olur, guvenli sekilde
+  // danismanYeniTalepiTamamla'ya dusuyoruz.
+  if (!soru) {
+    await danismanYeniTalepiTamamla(from, session);
+    return;
+  }
+
   // "belge" tipi (Trafik/Kasko proforma/ruhsat OCR) - cevap yaziyla degil,
   // bir fotograf/PDF gonderilerek verilir (bkz. handleAdvisorMessage'daki
   // media isleyici), burada sadece istek metnini gosteriyoruz.
@@ -2290,6 +2349,25 @@ async function danismanYeniTalepiTamamla(from, session) {
     from,
     `Talep başarıyla oluşturuldu ✅ ${musteriAdi} için ${flow.label} talebi kaydedildi ve ilgili kişilere iletildi.`
   );
+
+  // 03.08.2026 eklendi: beklenmedik ruhsat + "İkisi de" (danisman tarafi) -
+  // conversationEngine.js'deki finishFlow'un AYNI mantigi (bkz. o dosyadaki
+  // yorum). Sigortalinin telefon numarasi (session.danismanYeniTelefon) ve
+  // ortak cevaplar (session.danismanYeniAnswers - arac bilgileri, ad soyad,
+  // sehir, meslek vb.) oldugu gibi korunuyor, telefon TEKRAR SORULMUYOR -
+  // SADECE ikinci urunun kendine ozel (orn. Kasko'nun kasko_durumu/
+  // arac_fotograflari) sorulari sorulacak.
+  if (session.danismanYeniIkisiDeSonraki) {
+    const sonrakiUrunKey = session.danismanYeniIkisiDeSonraki;
+    session.danismanYeniIkisiDeSonraki = null;
+    session.danismanYeniUrunKey = sonrakiUrunKey;
+    const sonrakiFlow = flows[sonrakiUrunKey];
+    session.danismanYeniSoruIndex = sonrakiGecerliIndex(sonrakiFlow.questions, session.danismanYeniAnswers, 0);
+    session.state = "DANISMAN_YENI_SORU";
+    await danismanSoruSor(from, session);
+    return;
+  }
+
   await devamMenuGoster(from, session);
 }
 
@@ -2901,14 +2979,32 @@ async function randevuDefteriMusteriGoster(from, session, musteri) {
   session.randevuDefteriSeciliId = musteri.id;
 
   // 02.08.2026 DUZELTME (Enbel'in talebi): arama scripti icin gosterilen
-  // alanlar SADECE danismanin acikca istedigi bes kalemle sinirlandi - isim
-  // soyisim + telefon (her zaman), varsa is yeri (sirketAdi), varsa dogum
-  // yilindan hesaplanmis yas, varsa odedigi vergi. Eskiden ayrica gosterilen
-  // "Vergi No" ve "Şirket Türü" kaldirildi (danismanin telefonda soylemesi
-  // gereken bilgiler arasinda degildi) - kayitta hala tutuluyor, panelden/
-  // ihtiyac olursa tekrar eklenebilir.
-  const satirlar = [`👤 ${musteri.adSoyad}`, `📞 ${musteri.telefon}`];
-  if (musteri.sirketAdi) satirlar.push(`🏢 İş Yeri: ${musteri.sirketAdi}`);
+  // alanlar SADECE danismanin acikca istedigi kalemlerle sinirlandi - isim
+  // soyisim + telefon(lar) (her zaman), varsa is yeri (sirketAdi), varsa
+  // dogum yilindan hesaplanmis yas, varsa odedigi vergi. Eskiden ayrica
+  // gosterilen "Vergi No" ve "Şirket Türü" kaldirildi (danismanin telefonda
+  // soylemesi gereken bilgiler arasinda degildi) - kayitta hala tutuluyor,
+  // panelden/ihtiyac olursa tekrar eklenebilir.
+  //
+  // 02.08.2026 eklendi (Enbel'in talebi): bazi musterilerin BIRDEN FAZLA
+  // numarasi olabiliyor (Excel'deki Cep Telefonu1/2/3) - hepsi
+  // randevuDefteriStore.js'te musteri.telefonlar dizisinde tutuluyor, hepsi
+  // ayri birer satir olarak paylasiliyor (danisman hangisiyle ulasabilirse
+  // onu kullanabilsin diye). Her biri WhatsApp'a mesaj gonderebilmek icin
+  // uluslararasi bicimde (90XXXXXXXXXX) saklaniyor, ama danisman bu
+  // numaralari TELEFONDAN ARAYACAK - o yuzden ekrana hep tanidik yerel
+  // bicimde ("0532 123 45 67") basiliyor.
+  //
+  // 02.08.2026 eklendi (Enbel'in talebi): kaynak veride isim/sirket adi
+  // TAMAMI BUYUK (ya da tamami kucuk) harfle gelebiliyor - danismanla
+  // paylasirken sadece ilk harfleri buyuk, okunakli bir bicimde gosteriyoruz
+  // (bkz. isimIlkHarfleriBuyukYap - Bekleyen İş/Gecikmiş İş listelerinde de
+  // kullanilan AYNI fonksiyon, Turkce İ/I/ı/i donusumlerini dogru yapiyor).
+  const telefonlar =
+    musteri.telefonlar && musteri.telefonlar.length ? musteri.telefonlar : [musteri.telefon].filter(Boolean);
+  const satirlar = [`👤 ${isimIlkHarfleriBuyukYap(musteri.adSoyad)}`];
+  telefonlar.forEach((tel) => satirlar.push(`📞 ${telefonYerelBicimGoster(tel)}`));
+  if (musteri.sirketAdi) satirlar.push(`🏢 İş Yeri: ${isimIlkHarfleriBuyukYap(musteri.sirketAdi)}`);
   if (musteri.yas) satirlar.push(`🎂 Yaş: ${musteri.yas}`);
   if (musteri.sonDonemVergisi) satirlar.push(`💰 Ödediği Vergi: ${musteri.sonDonemVergisi}`);
 
@@ -2950,7 +3046,11 @@ async function randevuDefteriOlumsuzTamamla(from, session, neden) {
   randevuDefteriStore.olumsuzIsaretle(session.randevuDefteriSeciliId, neden);
   await sendText(from, `Not edildi. ${musteri ? musteri.adSoyad : "Müşteri"} kaydı olumsuz olarak işaretlendi.`);
   session.randevuDefteriSeciliId = null;
-  await randevuDefteriMenuGoster(from, session);
+  // 03.08.2026 DUZELTME (Enbel'in talebi): isaretlemeden sonra ana menuye
+  // DONMEK yerine otomatik olarak bir SONRAKI musteri gosteriliyor (bkz.
+  // REFERANS_ARAMA_DURDURMA_REGEX yorumu) - danisman "yeterli" diyene kadar
+  // arama modu boyle devam eder.
+  await randevuDefteriMusteriAra(from, session);
 }
 
 async function randevuDefteriYanlisNumaraTamamla(from, session) {
@@ -2961,7 +3061,8 @@ async function randevuDefteriYanlisNumaraTamamla(from, session) {
     `Not edildi ✅ ${musteri ? musteri.adSoyad : "Müşteri"} kaydı "yanlış numara" olarak işaretlendi, bu numara bir daha kimseye önerilmeyecek.`
   );
   session.randevuDefteriSeciliId = null;
-  await randevuDefteriMenuGoster(from, session);
+  // 03.08.2026 DUZELTME: bkz. randevuDefteriOlumsuzTamamla'daki AYNI not.
+  await randevuDefteriMusteriAra(from, session);
 }
 
 // 01.08.2026 DUZELTILDI: kullanicinin talebi uzerine randevu gunu/saati
@@ -2988,6 +3089,30 @@ async function randevuDefteriYanlisNumaraTamamla(from, session) {
 // AYNI sekilde cagrilir - randevuDefteriRandevuTamamla'nin gormesi
 // acisindan iki akis arasinda fark yoktur, ikisinde de "secili bir kayit"
 // vardir.
+// 02.08.2026 eklendi (Enbel'in talebi): "müşterinin birden fazla numarası
+// varsa bunlardan hangisinin müşteriye ait olduğunu sor ve diğerlerini
+// sistemden silelim" - SADECE goruşme "Olumlu" sonuclandiginda sorulur
+// (danisman kararı: yalnizca gercek temas kurulan bir sonucta hangi
+// numaranin dogru oldugu belli olur - Ulaşılamadı/Yanlış Numara'da henuz
+// hangi numaranin dogru oldugu bilinmiyor, o yuzden orada SORULMUYOR,
+// numaralar oldugu gibi kaliyor). Secilen numara disindakiler
+// randevuDefteriStore.dogruNumarayiSec ile hem kayittan hem GLOBAL
+// index'ten siliniyor (bkz. o fonksiyonun yorumu).
+async function randevuDefteriDogruNumaraSor(from, session, musteri) {
+  session.state = "DANISMAN_RANDEVU_DEFTERI_DOGRU_NUMARA_SEC";
+  // Secim eslesirken orijinal (uluslararasi, 90XXXXXXXXXX) degerlere geri
+  // donebilmek icin session'da SIRALI olarak saklaniyor - kullaniciya
+  // gosterilen ise sadece yerel bicimi (bkz. asagidaki secenekler).
+  session.randevuDefteriNumaraSecenekleri = musteri.telefonlar;
+  const secenekler = musteri.telefonlar.map((t) => telefonYerelBicimGoster(t));
+  await sendList(
+    from,
+    "Tebrikler! 🎉 Bu müşterinin sistemde birden fazla numarası vardı - hangisinden ulaştınız?",
+    "Seçin",
+    secenekler
+  );
+}
+
 async function randevuDefteriRandevuGunSor(from, session) {
   session.state = "DANISMAN_RANDEVU_DEFTERI_RANDEVU_GUN";
   session.randevuDefteriGecici = {};
@@ -3080,7 +3205,7 @@ async function randevuDefteriRandevuTamamla(from, session) {
     await conversationEngine.randevuDefteriHatirlatmaGonder(
       ENBEL_NUMARASI,
       `📅 Yeni Randevu\n\nDanışman: ${danisman ? danisman.name : from}\nMüşteri: ${musteri ? musteri.adSoyad : "?"} (${
-        musteri ? musteri.telefon : "?"
+        musteri ? telefonYerelBicimGoster(musteri.telefon) : "?"
       })\nTarih: ${zamanMetni}\nYer: ${g.yer}`
     );
   } catch (err) {
@@ -3089,7 +3214,9 @@ async function randevuDefteriRandevuTamamla(from, session) {
 
   session.randevuDefteriGecici = null;
   session.randevuDefteriSeciliId = null;
-  await randevuDefteriMenuGoster(from, session);
+  // 03.08.2026 DUZELTME: bkz. randevuDefteriOlumsuzTamamla'daki AYNI not -
+  // ana menuye donmek yerine otomatik olarak bir sonraki musteri gosterilir.
+  await randevuDefteriMusteriAra(from, session);
 }
 
 async function randevuDefteriTekrarTarihSor(from, session, durum) {
@@ -3121,7 +3248,8 @@ async function randevuDefteriTekrarTamamla(from, session) {
 
   session.randevuDefteriGecici = null;
   session.randevuDefteriSeciliId = null;
-  await randevuDefteriMenuGoster(from, session);
+  // 03.08.2026 DUZELTME: bkz. randevuDefteriOlumsuzTamamla'daki AYNI not.
+  await randevuDefteriMusteriAra(from, session);
 }
 
 // --- Belgelerin TOPLU/KARISIK sirada gonderilebilmesi (24.07.2026 geri
@@ -3603,6 +3731,49 @@ async function handleAdvisorMessage(from, parsed) {
       return;
     }
 
+    // 03.08.2026 eklendi (Enbel'in talebi, ayni gun proforma destegi de
+    // eklendi): Buraya kadar gelindiyse (aktif bir soru/belge akisi yok -
+    // danisman menu/bos seviyede) VE gonderilen bir belgeyse, ONCE bunun
+    // beklenmedik bir ARAÇ RUHSATI YA DA PROFORMA belgesi olup olmadigina
+    // bakiyoruz - musteri tarafiyla (conversationEngine.js'deki media
+    // isleyicisi) AYNI paylasilan yardimci fonksiyonlari kullanarak (bkz. o
+    // dosyadaki beklenmedikAracBelgesiDeneVeAnalizEt/aracBelgesiOCRSonucundanAnswersDoldur
+    // yorumu). Bir arac belgesi olarak taniniyorsa (Claude "okunabilir: true"
+    // donerse) Trafik/Kasko/Ikisi de sorusunu sorup, danismanin musteri
+    // adina yeni talep olusturma akisini (DANISMAN_YENI_*) belgeden okunan
+    // bilgilerle ONCEDEN DOLDURULMUS sekilde baslatiyoruz - taniyamazsa
+    // (okunabilir false ya da analiz basarisiz olursa) SESSIZCE asagidaki
+    // "Araç Satış Sözleşmesi" kontrolune (mevcut davranis) duselim - bu yeni
+    // ozellik mevcut davranisi asla bozmamali.
+    const beklenmedikBelgeTuruUygunMu =
+      parsed.mimeType && (parsed.mimeType.startsWith("image/") || parsed.mimeType === "application/pdf");
+    if (beklenmedikBelgeTuruUygunMu) {
+      try {
+        const { buffer, mimeType } = await mediaIndir(parsed.mediaId);
+        const gercekMimeType = parsed.mimeType || mimeType;
+        const belgeSonucu = await conversationEngine.beklenmedikAracBelgesiDeneVeAnalizEt(buffer, gercekMimeType);
+        if (belgeSonucu) {
+          session.danismanBeklenmedikAracBelgesiVeri = {
+            tur: belgeSonucu.tur,
+            sonuc: belgeSonucu.sonuc,
+            veriBase64: buffer.toString("base64"),
+            mimeType: gercekMimeType
+          };
+          session.state = "DANISMAN_ARAC_BELGESI_URUN_SEC";
+          const tanitim = conversationEngine.ARAC_BELGESI_TANITIM_CUMLESI[belgeSonucu.tur];
+          await sendList(
+            from,
+            `${tanitim} Bu araç için Trafik Sigortası mı, Kasko mu, yoksa ikisini birden mi oluşturmak istersiniz?`,
+            "Ürün Seç",
+            conversationEngine.ARAC_BELGESI_URUN_SEC_SECENEKLERI
+          );
+          return;
+        }
+      } catch (err) {
+        console.error("Beklenmedik arac belgesi kontrolu basarisiz (sessizce sonraki kontrole dusuluyor):", err.message);
+      }
+    }
+
     // Buraya kadar gelindiyse (aktif bir soru/belge akisi yok - danisman
     // menu/bos seviyede) VE gonderilen bir fotografsa, otomatik olarak bir
     // "Araç Satış Sözleşmesi" (noter onaylı) olup olmadigini kontrol ediyoruz.
@@ -4061,6 +4232,63 @@ async function handleAdvisorMessage(from, parsed) {
     }
 
     // --- Yeni talep olusturma akisi ---
+    // 03.08.2026 eklendi: beklenmedik (sorulmadan gonderilen) bir ruhsat/
+    // proforma belgesi taninip Trafik/Kasko/Ikisi de sorusu soruldugunda
+    // gelen cevabi isler (bkz. yukaridaki media isleyicisindeki tetikleme).
+    // Musteri tarafinin AKSINE, burada sigortalinin telefon numarasi henuz
+    // bilinmiyor (danisman belgeyi gondermeden once bunu paylasmadi) - bu
+    // yuzden urun secildikten sonra MEVCUT "DANISMAN_YENI_TELEFON_BEKLE"
+    // durumuna gecip (bkz. asagisi) o durumun KENDI mantigiyla telefonu
+    // soruyoruz, hicbir kod tekrarlanmiyor.
+    case "DANISMAN_ARAC_BELGESI_URUN_SEC": {
+      const secilen = matchOption(userText, conversationEngine.ARAC_BELGESI_URUN_SEC_SECENEKLERI);
+      if (!secilen) {
+        await sendList(
+          from,
+          "Lütfen listeden bir seçenek seçer misiniz? 🙏",
+          "Ürün Seç",
+          conversationEngine.ARAC_BELGESI_URUN_SEC_SECENEKLERI
+        );
+        return;
+      }
+
+      const veri = session.danismanBeklenmedikAracBelgesiVeri;
+      session.danismanBeklenmedikAracBelgesiVeri = null;
+      const oncelikliUrun = secilen === "Kasko" ? "kasko" : "trafik";
+
+      session.danismanYeniUrunKey = oncelikliUrun;
+      session.danismanYeniAnswers = {};
+      session.danismanYeniEkBelgeler = [];
+      session.danismanSaglikAileAsama = null;
+      session.danismanSaglikAileGecici = null;
+
+      if (veri) {
+        conversationEngine.aracBelgesiOCRSonucundanAnswersDoldur(session.danismanYeniAnswers, veri.tur, veri.sonuc);
+        session.danismanYeniEkBelgeler.push(
+          conversationEngine.aracBelgesiEkBelgeKaydiOlustur(veri.tur, veri.mimeType, veri.veriBase64)
+        );
+      }
+
+      // "İkisi de" secilirse once Trafik'i (kasko capraz satis sorusu
+      // "Evet" olarak onceden isaretlenmis sekilde) tamamlatiyoruz, Trafik
+      // bitince danismanYeniTalepiTamamla otomatik olarak Kasko'nun SADECE
+      // henuz cevaplanmamis sorularini sormaya devam ediyor (bkz. o
+      // fonksiyonun sonundaki "danismanYeniIkisiDeSonraki" kontrolu).
+      if (secilen === "İkisi de") {
+        session.danismanYeniAnswers.kasko_talebi = "Evet";
+        session.danismanYeniIkisiDeSonraki = "kasko";
+      } else {
+        session.danismanYeniIkisiDeSonraki = null;
+      }
+
+      session.state = "DANISMAN_YENI_TELEFON_BEKLE";
+      await sendText(
+        from,
+        "Sigortalının telefon numarasını (başında ülke koduyla, örn: 905551234567 şeklinde) paylaşır mısınız?"
+      );
+      return;
+    }
+
     case "DANISMAN_YENI_URUN_SEC": {
       if (parsed.type !== "interactive" || !parsed.interactiveId) {
         await yeniTalepUrunSec(from, session);
@@ -4574,6 +4802,10 @@ async function handleAdvisorMessage(from, parsed) {
     }
 
     case "DANISMAN_RANDEVU_DEFTERI_DURUM_SEC": {
+      if (parsed.type === "text" && REFERANS_ARAMA_DURDURMA_REGEX.test(userText || "")) {
+        await referansAramaDurduruldu(from, session);
+        return;
+      }
       const secim = matchOption(userText, RANDEVU_DEFTERI_DURUM_SECENEKLERI) || userText;
       const musteri = randevuDefteriStore.kayitGetir(session.randevuDefteriSeciliId);
       if (!musteri) {
@@ -4581,6 +4813,14 @@ async function handleAdvisorMessage(from, parsed) {
         return;
       }
       if (secim === "Olumlu") {
+        // 02.08.2026 eklendi: birden fazla numarasi olan bir musteride once
+        // hangi numaranin dogru oldugunu soruyoruz (bkz.
+        // randevuDefteriDogruNumaraSor'un yorumu) - tek numarasi varsa bu
+        // adim atlanip dogrudan randevu gunu sorulur (mevcut davranis).
+        if (musteri.telefonlar && musteri.telefonlar.length > 1) {
+          await randevuDefteriDogruNumaraSor(from, session, musteri);
+          return;
+        }
         await randevuDefteriRandevuGunSor(from, session);
         return;
       }
@@ -4601,6 +4841,28 @@ async function handleAdvisorMessage(from, parsed) {
         return;
       }
       await sendList(from, "Lütfen listeden bir sonuç seçin:", "Seçin", RANDEVU_DEFTERI_DURUM_SECENEKLERI);
+      return;
+    }
+
+    // 02.08.2026 eklendi: "Olumlu" sonucunda, birden fazla numarasi olan bir
+    // musteri icin hangi numaradan ulasildigini secer - bkz.
+    // randevuDefteriDogruNumaraSor/randevuDefteriStore.dogruNumarayiSec.
+    case "DANISMAN_RANDEVU_DEFTERI_DOGRU_NUMARA_SEC": {
+      if (parsed.type === "text" && REFERANS_ARAMA_DURDURMA_REGEX.test(userText || "")) {
+        await referansAramaDurduruldu(from, session);
+        return;
+      }
+      const secenekler = (session.randevuDefteriNumaraSecenekleri || []).map((t) => telefonYerelBicimGoster(t));
+      const secilenYerel = matchOption(userText, secenekler);
+      if (!secilenYerel) {
+        await sendList(from, "Lütfen listeden bir numara seçer misiniz?", "Seçin", secenekler);
+        return;
+      }
+      const index = secenekler.indexOf(secilenYerel);
+      const seciliTelefon = (session.randevuDefteriNumaraSecenekleri || [])[index];
+      randevuDefteriStore.dogruNumarayiSec(session.randevuDefteriSeciliId, seciliTelefon);
+      session.randevuDefteriNumaraSecenekleri = null;
+      await randevuDefteriRandevuGunSor(from, session);
       return;
     }
 

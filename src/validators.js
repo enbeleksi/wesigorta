@@ -173,6 +173,28 @@ function telefonUluslararasiFormata(value) {
   return v; // beklenmedik bir format - oldugu gibi denenir
 }
 
+// 02.08.2026 eklendi (Enbel'in talebi): "numaraları +90 veya 90 veya 0 ile
+// başlayan şekilde de göndersen sen danışmanlara numara 0532 123 45 67
+// şeklinde paylaş" - yani KAYNAK veri (orn. Referans Yükle Excel'i, ya da
+// WhatsApp'a mesaj gondermek icin kullanilan 90XXXXXXXXXX ic format)
+// hangi onekle gelirse gelsin, danismana GORUNTULENIRKEN (aramasi icin)
+// her zaman tanidik yerel bicimde ("0532 123 45 67") gosterilir. Girdi
+// telefonUluslararasiFormata'nin ciktisi olan bare "90XXXXXXXXXX" (en yaygin
+// kullanim, bkz. randevuDefteriStore.js -> normalizeTelefon) olabilecegi
+// gibi, henuz normallestirilmemis +90/0/onceksiz bir deger de olabilir -
+// hepsini kabul eder. Taninmayan bir bicim gelirse (beklenmedik/bozuk veri),
+// veri kaybetmemek icin degeri OLDUGU GIBI doner.
+function telefonYerelBicimGoster(value) {
+  const v = (value || "").toString().replace(/[\s()\-]/g, "");
+  let yerel = null;
+  if (/^\+90\d{10}$/.test(v)) yerel = `0${v.slice(3)}`;
+  else if (/^90\d{10}$/.test(v)) yerel = `0${v.slice(2)}`;
+  else if (/^0\d{10}$/.test(v)) yerel = v;
+  else if (/^5\d{9}$/.test(v)) yerel = `0${v}`;
+  else return value || "";
+  return `${yerel.slice(0, 4)} ${yerel.slice(4, 7)} ${yerel.slice(7, 9)} ${yerel.slice(9, 11)}`;
+}
+
 // Prim tutari gibi serbest metin girilen ama icinde mutlaka bir rakam
 // gecmesi gereken alanlar icin (orn. "USD 450,00"). Kesin bir para formati
 // zorlamiyoruz (doviz/TL, ondalik ayraci degisebiliyor), sadece bos ya da
@@ -317,6 +339,7 @@ module.exports = {
   adSoyadGecerliMi,
   telefonGecerliMi,
   telefonUluslararasiFormata,
+  telefonYerelBicimGoster,
   epostaGecerliMi,
   primTutariGecerliMi,
   saatAraligiGecerliMi,
