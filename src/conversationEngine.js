@@ -148,8 +148,21 @@ async function sendChoiceQuestion(to, text, options) {
 // Turkce klavyesi olmayan kullanicilar bazen "Hayir" (Hayır yerine), "Kadin"
 // (Kadın yerine) gibi Turkce karakter kullanmadan yazabilir. Karsilastirma
 // yaparken bu farkliligi tolere etmek icin ozel karakterleri sadelestirir.
+// 04.08.2026 eklendi: urun secim menulerine emoji eklendi (flows.js'teki
+// menuLabel alanlari, orn. "🚗 Trafik Sigortası") - kullanici interaktif
+// listeden secince WhatsApp o basligi (emojiyle birlikte) userText olarak
+// geri gonderiyor, bu sorun degil (tam eslesme calisiyor). AMA kullanici
+// emojisiz duz metin yazarsa (orn. "trafik sigortası istiyorum") asagidaki
+// matchOption'daki "icinde geciyor mu" esnek eslestirmesi artik BOZULUYORDU:
+// opsiyon metninin basindaki emoji, ne userText'in bir alt-dizesi ne de
+// userText opsiyonun bir alt-dizesi olmasina izin veriyordu. Bu yuzden
+// karsilastirmadan ONCE emoji karakterlerini (ve varyasyon secici/ZWJ gibi
+// gorunmeyen isaretleyicileri) tamamen siliyoruz - emoji sadece GORSEL bir
+// eklenti, eslestirme mantigini ETKILEMEMELI.
 function normalizeTr(str) {
   return str
+    .replace(/\p{Extended_Pictographic}/gu, "")
+    .replace(/[\u{FE0F}\u{200D}]/gu, "")
     .replace(/İ/g, "i")
     .replace(/I/g, "i")
     .replace(/ı/g, "i")
@@ -158,7 +171,9 @@ function normalizeTr(str) {
     .replace(/ü/g, "u")
     .replace(/ş/g, "s")
     .replace(/ö/g, "o")
-    .replace(/ç/g, "c");
+    .replace(/ç/g, "c")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 // Kullanicinin yazdigi metni bir secenekle esler. Tam esleseni tercih eder,

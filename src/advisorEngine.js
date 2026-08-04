@@ -1071,8 +1071,15 @@ const BEKLEYEN_IS_TUM_EKIP_GOREBILEN_NUMARALAR = YONETICI_NUMARALARI.filter((n) 
 
 // --- Turkce karakter toleransli secenek eslestirme (conversationEngine.js'deki
 // ile ayni mantik, kucuk oldugu icin burada ayrica tanimlandi) ---
+// 04.08.2026 eklendi: conversationEngine.js'deki ayni isimli fonksiyonla ayni
+// gerekce - urun secim menulerine (flows.js'teki menuLabel) emoji eklendi,
+// bu yuzden karsilastirmadan once emoji karakterlerini (ve varyasyon
+// secici/ZWJ gibi gorunmeyen isaretleyicileri) siliyoruz ki emoji sadece
+// GORSEL bir eklenti olsun, esnek metin eslestirmesini bozmasin.
 function normalizeTr(str) {
   return (str || "")
+    .replace(/\p{Extended_Pictographic}/gu, "")
+    .replace(/[\u{FE0F}\u{200D}]/gu, "")
     .replace(/İ/g, "i")
     .replace(/I/g, "i")
     .replace(/ı/g, "i")
@@ -1081,7 +1088,9 @@ function normalizeTr(str) {
     .replace(/ü/g, "u")
     .replace(/ş/g, "s")
     .replace(/ö/g, "o")
-    .replace(/ç/g, "c");
+    .replace(/ç/g, "c")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function matchOption(userText, options) {

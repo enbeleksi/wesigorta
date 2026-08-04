@@ -823,6 +823,7 @@ function malpraktisMetin(answers, ikinciSahisMetni, ucuncuSahisUret) {
 module.exports = {
   dask: {
     label: "DASK",
+    menuLabel: "🏚️ DASK", // 04.08.2026 eklendi: urun secim listelerinde emoji gosterimi
     agentNumber: "905380711711", // Bahadır - elementer branş (DASK)
     advisors: DANISMANLAR,
     // QR kodundan gelen hazır mesaj bu metni içeriyorsa, bot direkt bu ürüne geçer
@@ -901,6 +902,7 @@ module.exports = {
 
   konut: {
     label: "Konut Sigortası",
+    menuLabel: "🏠 Konut Sigortası", // 04.08.2026 eklendi: urun secim listelerinde emoji gosterimi
     agentNumber: "905380711711", // Bahadır - elementer branş (Konut)
     advisors: DANISMANLAR,
     questions: [
@@ -973,6 +975,7 @@ module.exports = {
 
   trafik: {
     label: "Trafik Sigortası",
+    menuLabel: "🚗 Trafik Sigortası", // 04.08.2026 eklendi: urun secim listelerinde emoji gosterimi
     intro:
       "Trafik Sigortası, bir kaza durumunda karşı tarafa vereceğiniz zararları güvence altına alan, yasal olarak zorunlu bir sigortadır. Teklifinizi hazırlamak için birkaç bilgi alalım. 🚗",
     agentNumber: "905380711711", // Bahadır - elementer branş (Trafik)
@@ -1009,6 +1012,7 @@ module.exports = {
 
   kasko: {
     label: "Kasko Sigortası",
+    menuLabel: "🚘 Kasko Sigortası", // 04.08.2026 eklendi: urun secim listelerinde emoji gosterimi
     intro:
       "Kasko, aracınızı kaza, hırsızlık, yangın gibi risklere karşı güvence altına alır. Teklifinizi hazırlamak için birkaç bilgi alalım. 🚗",
     agentNumber: "905380711711", // Bahadır - elementer branş (Kasko)
@@ -1079,6 +1083,7 @@ module.exports = {
 
   ozel_saglik: {
     label: "Özel Sağlık Sigortası",
+    menuLabel: "🏥 Özel Sağlık Sig.", // 04.08.2026 eklendi: urun secim listelerinde emoji gosterimi
     agentNumber: "905380711711", // Bahadır - elementer branş (Özel Sağlık)
     advisors: DANISMANLAR,
     questions: saglikUrunuSorulari()
@@ -1086,7 +1091,7 @@ module.exports = {
 
   tss: {
     label: "TSS (Tamamlayıcı Sağlık Sigortası)",
-    menuLabel: "TSS (Tamamlayıcı Sig.)", // Urun secim listesinde WhatsApp'in 24 karakter siniri var
+    menuLabel: "🩺 TSS (Tamamlayıcı)", // Urun secim listesinde WhatsApp'in 24 karakter siniri var - 04.08.2026 emoji eklendi
     agentNumber: "905380711711", // Bahadır - elementer branş (TSS)
     advisors: DANISMANLAR,
     questions: saglikUrunuSorulari()
@@ -1094,7 +1099,7 @@ module.exports = {
 
   hayat: {
     label: "Prim İadeli Hayat Sigortası",
-    menuLabel: "Prim İadeli Hayat Sig.", // Urun secim listesinde WhatsApp'in 24 karakter siniri var
+    menuLabel: "💰 Prim İadeli Hayat", // Urun secim listesinde WhatsApp'in 24 karakter siniri var - 04.08.2026 emoji eklendi, 04.08.2026 kullanici talebiyle para kesesi simgesine guncellendi
     agentNumber: "905326876126", // Enbel - danışman seçilmezse (Hayır derse) varsayılan buraya düşer
     // Bu urun tamamlaninca Garanti Emeklilik'e de otomatik mail gider
     // (bkz. eposta.js) - onlar kendi is akislarina ekleyip cagri merkezinden ariyor.
@@ -1135,7 +1140,7 @@ module.exports = {
 
   bes: {
     label: "Bireysel Emeklilik Sistemi (BES)",
-    menuLabel: "Bireysel Emeklilik(BES)", // Urun secim listesinde WhatsApp'in 24 karakter siniri var
+    menuLabel: "🏦 Bireysel Emek.(BES)", // Urun secim listesinde WhatsApp'in 24 karakter siniri var - 04.08.2026 emoji eklendi, 04.08.2026 kullanici talebiyle (domuz emojisi istenmedi) banka simgesine guncellendi
     agentNumber: "905326876126", // Enbel - BES doğrudan buraya gider
     // Bu urun tamamlaninca Garanti Emeklilik'e de otomatik mail gider
     // (bkz. eposta.js) - onlar kendi is akislarina ekleyip cagri merkezinden ariyor.
@@ -1185,7 +1190,7 @@ module.exports = {
     label: "Hekim Sorumluluk Sigortası (Malpraktis)",
     intro:
       "Hekim Sorumluluk Sigortası, mesleki uygulamalarınız sırasında oluşabilecek olası taleplere karşı sizi güvence altına alır. Teklifinizi hazırlamak için birkaç bilgi alalım. 🩺",
-    menuLabel: "Hekim Sor. (Malpraktis)", // Urun secim listesinde WhatsApp'in 24 karakter siniri var
+    menuLabel: "⚕️ Hekim Sorumluluk", // Urun secim listesinde WhatsApp'in 24 karakter siniri var - 04.08.2026 emoji eklendi
     agentNumber: "905380711711", // Bahadır - elementer branş (Malpraktis)
     // Malpraktis musterilerine (hekimlere) sadece isimleriyle ve "Hocam" diye
     // hitap ediyoruz (soyisim olmadan), daha sicak ve meslege uygun bir ton icin.

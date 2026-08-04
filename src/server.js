@@ -1590,6 +1590,22 @@ function urunElementerMi(urun) {
 // SADECE EN SON eklenen not gosterilir (tum not gecmisini gostermek gunluk
 // ozeti cok kalabaliklastirirdi) - tam not gecmisi hala panelde/WhatsApp'taki
 // talep detayinda goruluyor.
+// 04.08.2026 eklendi (Enbel'in talebi): gunluk ozette bir is YENILEME
+// kaynakliysa (yani leadStore.gecmisLeadEkle'ye yenilemeBitisTarihi
+// verilerek olusturulmus - bkz. yenilemeleriBekleyenIseAktar), o
+// yenilemenin son (yenilenmesi gereken) tarihini kisa Turkce formatta
+// (orn. "17 Tem.") satira ekliyoruz - boylece danisman/Bahadır/Enbel hangi
+// isin ne zamana kadar yenilenmesi gerektigini listeye bakar bakmaz
+// gorebiliyor. Turkiye saatine gore hesaplanir (bkz. yukaridaki
+// TURKIYE_UTC_FARKI_MS yorumu) - sunucunun kendi calisma saat dilimine
+// bagli DEGILDIR.
+const GUNLUK_OZET_KISA_AYLAR = ["Oca", "Şub", "Mar", "Nis", "May", "Haz", "Tem", "Ağu", "Eyl", "Eki", "Kas", "Ara"];
+function yenilemeSonTarihiKisaGoster(ms) {
+  if (typeof ms !== "number" || Number.isNaN(ms)) return null;
+  const d = new Date(ms + TURKIYE_UTC_FARKI_MS);
+  return `${d.getUTCDate()} ${GUNLUK_OZET_KISA_AYLAR[d.getUTCMonth()]}.`;
+}
+
 function acikIsSatiriOlustur(lead) {
   const gunSayisi = Math.max(0, Math.floor((Date.now() - lead.olusturulmaZamani) / (24 * 60 * 60 * 1000)));
   const sonNot = lead.notlar && lead.notlar.length > 0 ? lead.notlar[lead.notlar.length - 1] : null;
@@ -1598,7 +1614,9 @@ function acikIsSatiriOlustur(lead) {
   // urun'un yaninda 🆘 ile baslik da gosterilir (bkz. leadStore.js'deki
   // yeniLeadOlustur'un baslik alani, advisorEngine.js'deki destekTalebiGonder).
   const anaEtiket = lead.baslik ? `🆘 ${lead.baslik} (${lead.urun})` : lead.urun;
-  return `• ${lead.musteriAdi || lead.telefon} - ${anaEtiket}${lead.danismanAdi ? ` (${lead.danismanAdi})` : ""} - ${gunSayisi} gündür açık${notEki}`;
+  const yenilemeTarihi = yenilemeSonTarihiKisaGoster(lead.yenilemeBitisTarihi);
+  const yenilemeEki = yenilemeTarihi ? ` (⏳ ${yenilemeTarihi})` : "";
+  return `• ${lead.musteriAdi || lead.telefon} - ${anaEtiket}${lead.danismanAdi ? ` (${lead.danismanAdi})` : ""}${yenilemeEki} - ${gunSayisi} gündür açık${notEki}`;
 }
 
 // 26.07.2026 eklendi: her sabah AYNI "☀️ Günaydın!" yerine, gunden gune
