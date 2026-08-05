@@ -60,6 +60,12 @@ async function ruhsatFotografiAnalizEt(buffer, mimeType) {
                 "- (E) Şase No / Şasi No\n" +
                 "- (C.1.2) Adı ve (C.1.1) Soyadı/Ticari Unvanı - ikisini birleştirip tam ad soyad olarak ver\n" +
                 "- (Y.4) T.C. Kimlik No/Vergi No\n\n" +
+                "ÖNEMLİ: Gönderilen görsel GERÇEKTEN resmi bir ruhsat/tescil belgesi olmalı (üzerinde yukarıdaki " +
+                "alan kodları/kutucukları görünen, devlet tarafından basılmış bir belge). Eğer görsel sadece " +
+                "aracın kendisinin (belgesiz) bir fotoğrafıysa, bir proforma/satış teklifi belgesiyse, ya da " +
+                "ruhsat DIŞINDA başka bir şeyse, okunabilir alanını false yap ve aciklama alanında bunun bir " +
+                "ruhsat olmadığını (ne olduğunu tahmin edebiliyorsan belirterek) yaz - görünen bir araç " +
+                "markası/modeli varmış gibi TAHMİN ederek alanları uydurma.\n\n" +
                 "SADECE aşağıdaki JSON formatında cevap ver, başka hiçbir metin ekleme:\n" +
                 '{"okunabilir": true ya da false, "seri_no": "... ya da null", "plaka": "... ya da null", ' +
                 '"marka": "... ya da null", "model": "... ya da null", "motor_no": "... ya da null", ' +

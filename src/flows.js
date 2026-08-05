@@ -253,7 +253,19 @@ function saglikUrunuSorulari() {
       text: "Kimin için sigorta yaptırmak istiyorsunuz?",
       danismanText: "Sigorta kimin için yaptırılacak?",
       type: "choice",
-      options: ["Kendim", "Eşim", "Çocuğum", "Ailem (Birden Fazla)"]
+      options: ["Kendim", "Eşim", "Çocuğum", "Ailem (Birden Fazla)"],
+      // 04.08.2026 eklendi (Enbel'in bildirdigi hata): "Kendim/Eşim/Çocuğum" 1.
+      // sahis (musteri agzindan) secenekler - bir danisman musterisi adina
+      // talep olustururken "Kendim" secmesi anlamsiz/kafa karistirici (kendi
+      // sigortasi degil, sigortalininki). Danisman akisinda BUNUN YERINE
+      // asagidaki 3. sahis secenekleri GOSTERILIR (bkz. advisorEngine.js'teki
+      // danismanSoruSor/DANISMAN_YENI_SORU - "danismanOptions" varsa gorunumde
+      // o kullanilir) - ama SAKLANAN deger her zaman ayni index'teki "options"
+      // karsiligidir (orn. "Sigortalının Kendisi" secilince yine "Kendim"
+      // kaydedilir), boylece answers.kimin_icin === "Kendim" gibi TUM diger
+      // kontroller (bu dosyada VE conversationEngine.js/advisorEngine.js'de)
+      // degismeden calismaya devam eder.
+      danismanOptions: ["Sigortalının Kendisi", "Eşi", "Çocuğu", "Ailesi (Birden Fazla)"]
     },
     {
       id: "ad_soyad",

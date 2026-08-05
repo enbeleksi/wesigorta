@@ -2266,10 +2266,17 @@ async function danismanSoruSor(from, session) {
   const metin = conversationEngine.resolveDanismanText(soru, session.danismanYeniAnswers);
 
   if (soru.type === "choice") {
-    if (soru.options.length > 3) {
-      await sendList(from, metin, "Seçin", soru.options);
+    // 04.08.2026 eklendi: bazi sorularin (orn. "kimin_icin") musteri
+    // secenekleri 1. sahis agzindan yazilmis ("Kendim" gibi) - danisman
+    // musterisi adina talep olustururken bu secenekler anlamsiz kaciyor.
+    // flows.js'te danismanOptions tanimliysa (3. sahis esdegeri) GORUNUMDE
+    // o kullanilir - secilince yine ayni index'teki "options" karsiligi
+    // (kanonik deger) saklanir, bkz. DANISMAN_YENI_SORU case'indeki eslesme.
+    const gosterilecekSecenekler = soru.danismanOptions || soru.options;
+    if (gosterilecekSecenekler.length > 3) {
+      await sendList(from, metin, "Seçin", gosterilecekSecenekler);
     } else {
-      await sendButtons(from, metin, soru.options);
+      await sendButtons(from, metin, gosterilecekSecenekler);
     }
   } else {
     await sendText(from, metin);
@@ -4421,14 +4428,63 @@ async function handleAdvisorMessage(from, parsed) {
       }
 
       if (soru.type === "choice") {
-        const secilen = matchOption(userText, soru.options);
-        if (!secilen) {
+        // 04.08.2026 eklendi: danismanOptions varsa (bkz. danismanSoruSor'daki
+        // AYNI yorum) kullaniciya ONLAR gosterilmisti - eslestirme de o
+        // dizide yapilmali. Secilen SEKLIN (goruntu metninin) index'i
+        // bulunup, SAKLANAN deger her zaman "options" dizisindeki KANONIK
+        // (musteri akisiyla ayni) karsiligi olacak sekilde cozuluyor.
+        const gosterilenSecenekler = soru.danismanOptions || soru.options;
+        const secilenGosterim = matchOption(userText, gosterilenSecenekler);
+        if (!secilenGosterim) {
           const metin = conversationEngine.resolveDanismanText(soru, session.danismanYeniAnswers);
-          if (soru.options.length > 3) await sendList(from, metin, "Seçin", soru.options);
-          else await sendButtons(from, metin, soru.options);
+          if (gosterilenSecenekler.length > 3) await sendList(from, metin, "Seçin", gosterilenSecenekler);
+          else await sendButtons(from, metin, gosterilenSecenekler);
           return;
         }
+        const secilenIndex = gosterilenSecenekler.indexOf(secilenGosterim);
+        const secilen = soru.options[secilenIndex];
         session.danismanYeniAnswers[soru.id] = secilen;
+
+        // 04.08.2026 eklendi (Enbel'in bildirdigi 3 hata): conversationEngine.js'deki
+        // musteri akisinda "kimin_icin"/"sigorta_ettiren_kendisi_mi" cevaplarina
+        // gore ayni turden tekrarlayan bilgilerin (isim/dogum tarihi/TC) otomatik
+        // doldurulup bir daha sorulmamasini saglayan kisayollar (bkz. o dosyadaki
+        // ASKING case'i icindeki ayni yorumlar) burada, danisman "yeni talep"
+        // akisinda HIC YOKTU - bu yuzden Özel Sağlık/TSS teklifinde danisman
+        // "sigortalı kendisi" (Kendim/Ailem) dedikten sonra bile:
+        //   1) cep_telefonu, DANISMAN_YENI_TELEFON_BEKLE'de zaten alinmis
+        //      sigortalı telefonu OLMASINA RAGMEN tekrar soruluyordu,
+        //   2) sigorta_ettiren_kendisi_mi'ye "Evet" denince, biraz once verilen
+        //      dogum_tarihi'ni kopyalamak yerine sigorta_ettiren_dogum_tarihi
+        //      YENIDEN soruluyordu,
+        //   3) ayni durumda, musterinin kalici profilinde (musteriProfilStore,
+        //      onceki bir satindan) TC kaydı varsa bile kullanilmayip tc_kimlik
+        //      YENIDEN soruluyordu.
+        // Asagidaki iki blok, conversationEngine.js'deki mantigin BIREBIR
+        // esdegeri - tek fark "session.answers"/"from" yerine
+        // "session.danismanYeniAnswers"/"session.danismanYeniTelefon" kullanilmasi.
+        if (
+          soru.id === "kimin_icin" &&
+          (secilen === "Kendim" || secilen === "Ailem (Birden Fazla)") &&
+          session.danismanYeniTelefon
+        ) {
+          session.danismanYeniAnswers.cep_telefonu = session.danismanYeniTelefon;
+        }
+
+        if (soru.id === "sigorta_ettiren_kendisi_mi" && secilen === "Evet") {
+          const kendiBilgisiBilinior =
+            session.danismanYeniAnswers.kimin_icin === "Kendim" ||
+            session.danismanYeniAnswers.kimin_icin === "Ailem (Birden Fazla)";
+          if (kendiBilgisiBilinior) {
+            if (session.danismanYeniAnswers.dogum_tarihi) {
+              session.danismanYeniAnswers.sigorta_ettiren_dogum_tarihi = session.danismanYeniAnswers.dogum_tarihi;
+            }
+            const kaliciProfil = musteriProfilStore.profilGetir(session.danismanYeniTelefon);
+            if (kaliciProfil && kaliciProfil.tcKimlik) {
+              session.danismanYeniAnswers.tc_kimlik = kaliciProfil.tcKimlik;
+            }
+          }
+        }
       } else {
         if (soru.validate && !soru.validate(userText, session.danismanYeniAnswers)) {
           const hint =

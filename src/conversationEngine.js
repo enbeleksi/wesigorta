@@ -1,5 +1,7 @@
+const fs = require("fs");
+const path = require("path");
 const { getSession, resetSession } = require("./sessionStore");
-const { sendText, sendButtons, sendList, sendTemplate, sendTemplatePozisyonel, mediaIndir } = require("./loggedWhatsapp");
+const { sendText, sendButtons, sendList, sendDocument, sendTemplate, sendTemplatePozisyonel, mediaIndir } = require("./loggedWhatsapp");
 const { ruhsatFotografiAnalizEt } = require("./ruhsatAnaliz");
 const { proformaAnalizEt } = require("./proformaAnaliz");
 const { garantiEmekliligeGonder } = require("./eposta");
@@ -204,6 +206,189 @@ function matchOption(userText, options) {
 // tesekkurun ARDINDAN baska bir seyin geldigi durumlari (gercek bir soru
 // icerebilecekleri icin) kasten YAKALAMAZ - $ ile ceviri sonunu sabitliyoruz.
 const KAPANIS_IFADE_REGEX = /^(cok\s+)?(tesekkur(ler)?(\s+ederim)?|sagol|saol|elinize\s+saglik)[\s!.,😊🙏👍🎉]*$/;
+
+// 04.08.2026 eklendi (Enbel'in talebi): "Kimse bir menu secmeden, dogrudan
+// 'kaza yaptim' gibi bir sey yazsa bot bunu anlayip yardimci olabilir mi?"
+// - musteri KVKK'yi onaylayip ismini verdikten sonra urun secim listesinde
+// (ASK_PRODUCT, bkz. asagidaki case) BEKLENEN listeden bir secim yerine
+// serbest bir metin yazarsa, o metin asagidaki senaryolardan biriyle
+// eslesiyorsa (kaza/hasar gibi), listeye "gecersiz secim" diye geri
+// donmek yerine ilgili bilgilendirme mesaji gosterilip (istege bagli)
+// bir belge (kaza tespit tutanagi/hasar fotografi) istenir - bkz.
+// durumBildirimiSenaryosuBul/durumBildirimiTamamla ve
+// "DURUM_BILDIRIMI_BELGE_BEKLE" case'i. BILINCLI OLARAK SADECE ASK_PRODUCT
+// (yani musteri "bosta"/menu bekliyorken) devrede - aktif bir teklif
+// formunu (ASKING) doldururken bu kontrol calismiyor, boylece "sasi no"
+// gibi bir soruya verilen alakasiz bir cevap yanlislikla bu senaryolardan
+// birini tetiklemiyor.
+//
+// Bu, "tam serbest sohbet" (bot her konuda Claude gibi cevap versin) DEGIL -
+// bilincli olarak SINIRLI, onceden tanimlanmis birkac somut senaryoyla
+// sinirli tutuldu (yanlis/eksik bilgi verme riskini dusuk tutmak icin).
+// Yeni bir senaryo eklemek icin bu diziye yeni bir eleman eklemeniz yeterli.
+//
+// 04.08.2026 eklendi (Enbel'in talebi, ayni gun): resmi bos "Maddi Hasarli
+// Trafik Kazasi Tespit Tutanagi" formu (Turkiye Sigorta ve Reasurans
+// Sirketleri Birligi'nin standart formu) proje icine gomulu (bkz.
+// belgeler/Maddi_Hasarli_Kaza_Tutanagi.pdf) statik bir PDF olarak saklanir -
+// boylece hicbir panel/DB islemi gerekmeden HER ZAMAN gonderilebilir hazirda
+// durur. Sadece BIR KEZ (ilk kullanimda) diskten okunup bellekte (Buffer
+// olarak) tutulur - her mesajda tekrar tekrar disk okuma yapilmaz.
+const KAZA_TUTANAGI_PDF_YOLU = path.join(__dirname, "belgeler", "Maddi_Hasarli_Kaza_Tutanagi.pdf");
+let kazaTutanagiPdfBufferCache = null; // null: henuz denenmedi, false: okunamadi, Buffer: basarili
+function kazaTutanagiPdfBufferGetir() {
+  if (kazaTutanagiPdfBufferCache === null) {
+    try {
+      kazaTutanagiPdfBufferCache = fs.readFileSync(KAZA_TUTANAGI_PDF_YOLU);
+    } catch (err) {
+      console.error("Kaza tespit tutanagi PDF'i okunamadi (belgeler/ klasorunde eksik olabilir):", err.message);
+      kazaTutanagiPdfBufferCache = false;
+    }
+  }
+  return kazaTutanagiPdfBufferCache || null;
+}
+
+// Musteri hicbir kaza YASAMADAN, sadece bos formu gormek/indirmek icin
+// dogrudan "tutanak" isterse ("kaza tutanağı gönderir misiniz" gibi) - bu
+// durumda asagidaki DURUM_BILDIRIMI akisina (lead olusturma + ekibe
+// bildirim) HIC GIRMEDEN sadece bos PDF gonderilir - gercek bir olay
+// bildirilmedigi icin ekibi bosuna mesgul etmeye gerek yok. ASK_PRODUCT
+// case'inde "kaza" senaryo tetikleyicisinden ONCE kontrol edilir - aksi
+// halde "kaza tutanağı gönderir misiniz" gibi bir istek (hem "tutanak" hem
+// "kaza" iceriyor olsa da) yanlislikla tam kaza-bildirimi akisina
+// (lead + ekip bildirimi) girerdi.
+// NOT: "tutanak" kelimesi Turkce unsuz yumusamasi (k -> g) nedeniyle sona
+// bir unlu ekleninde farkli gorunur (orn. "tutanağı" -> normalizeTr sonrasi
+// "tutanagi", "tutanak" DEGIL) - bu yuzden "tutanak" yerine ortak govde olan
+// "tutana" araniyor, boylece "tutanak"/"tutanağı"/"tutanağa"/"tutanağın" gibi
+// TUM cekimli haller tek bir kalipla yakalanir.
+const KAZA_TUTANAGI_BELGE_ISTEK_REGEX = /tutana/;
+
+async function kazaTutanagiPdfGonder(from, onMetin) {
+  const pdfBuffer = kazaTutanagiPdfBufferGetir();
+  if (!pdfBuffer) {
+    await sendText(from, "Şu an bu formu bulamadım, ekibimizden isteyebilirsiniz 🙏");
+    return;
+  }
+  if (onMetin) await sendText(from, onMetin);
+  try {
+    await sendDocument(from, pdfBuffer, "application/pdf", "Maddi_Hasarli_Kaza_Tutanagi.pdf");
+  } catch (err) {
+    console.error("Bos kaza tutanagi PDF'i musteriye gonderilemedi:", err?.response?.data || err.message);
+  }
+}
+
+const DURUM_BILDIRIMI_SENARYOLARI = [
+  {
+    id: "kaza",
+    baslik: "Kaza Bildirimi",
+    // normalizeTr uygulanmis (kucuk harf, Turkce karakterler sadelestirilmis,
+    // emoji silinmis) metne karsi test edilir - bu yuzden Turkce karakter
+    // icermez (orn. "çarpıştım" -> "carpistim").
+    tetikleyiciRegex: /\bkaza(ya|yi|si|dan)?\b|\bcarpt|\bcarpis/,
+    bilgilendirmeMetni:
+      "Geçmiş olsun! 🙏 Kaza sonrasında şunları yapmanızı öneririz:\n\n" +
+      "1️⃣ Can güvenliği her şeyden önce gelir - yaralanma varsa hemen 112'yi arayın.\n" +
+      "2️⃣ Aracınızı (mümkünse) trafiği tıkamayacak şekilde çekin, dörtlü flaşörleri yakın, gerekiyorsa üçgen reflektör koyun.\n" +
+      "3️⃣ Sadece maddi hasarlı, basit bir kazaysa taraflar birlikte 'Kaza Tespit Tutanağı' doldurup imzalayabilir ya da Sigorta Bilgi Merkezi'nin E-Hasar uygulamasından fotoğraflarla bildirim yapabilirsiniz. Yaralanma varsa ya da anlaşamıyorsanız 155 Trafik Polisi'ni arayın.\n" +
+      "4️⃣ Karşı tarafın plaka, ehliyet, ruhsat ve sigorta poliçe bilgilerini alın; araçların ve hasarın net fotoğraflarını çekin.\n\n" +
+      "Kaza Tespit Tutanağınız (ya da varsa diğer belgeler) elinizdeyse fotoğraf veya PDF olarak buraya gönderebilirsiniz, ekibimize hemen iletelim. Elinizde belge yoksa 'yok' yazabilirsiniz, durumu yine de ekibimize bildiririz."
+  },
+  {
+    id: "hasar",
+    baslik: "Hasar Bildirimi",
+    tetikleyiciRegex: /\byangin\b|\byandi\b|\bsu basti\b|\bsel basti\b|\bhirsizlik\b|\bcalindi\b|\bhirsiz\b|\bsoyuldum\b/,
+    bilgilendirmeMetni:
+      "Geçmiş olsun! 🙏 Hasar durumunda şunları yapmanızı öneririz:\n\n" +
+      "1️⃣ Can güvenliğiniz önce gelir - gerekiyorsa 112'yi (yangın/sağlık) ya da 155/156'yı (polis/jandarma) arayın.\n" +
+      "2️⃣ Hırsızlık/çalıntı durumunda mutlaka polise giderek tutanak tutturun - sigorta talebi için bu genellikle şarttır.\n" +
+      "3️⃣ Mümkünse ekip/eksper incelemesinden önce hasarlı alana dokunmadan/temizlemeden, farklı açılardan net fotoğraflar çekin.\n" +
+      "4️⃣ Elinizde polis tutanağı, itfaiye raporu gibi belgeler varsa bunları da saklayın.\n\n" +
+      "Fotoğraf ya da belgeniz varsa şimdi paylaşabilirsiniz, ekibimize hemen iletelim. Elinizde belge yoksa 'yok' yazabilirsiniz, durumu yine de ekibimize bildiririz."
+  }
+];
+
+function durumBildirimiSenaryosuBul(userText) {
+  const normalized = normalizeTr((userText || "").trim());
+  if (!normalized) return null;
+  return DURUM_BILDIRIMI_SENARYOLARI.find((s) => s.tetikleyiciRegex.test(normalized)) || null;
+}
+
+// Bir durum bildirimi (kaza/hasar) - belge paylasilsin ya da paylasilmasin
+// (belge parametresi null olabilir, "yok" gibi bir cevapla kapatilabilir) -
+// destekTalebiGonder/satistanIptalTalebiOlustur (advisorEngine.js) ile AYNI
+// desen: kendi basina "Açık" bir bekleyen-is kaydi olusturur (panelde
+// gorunsun/takip edilsin diye) ve elementer guvenlik agina (Bahadır + Enbel,
+// bkz. guvenlikAgiNumaralari) hem metin bildirimi hem de (belge varsa)
+// belgenin KENDISI WhatsApp dokumani olarak gonderilir - sadece metinle
+// yetinilmez, ekip belgeyi HER ZAMAN eline alsin.
+async function durumBildirimiTamamla(from, session, belge) {
+  const senaryo =
+    DURUM_BILDIRIMI_SENARYOLARI.find((s) => s.id === session.durumBildirimiSenaryoId) || {
+      id: "durum",
+      baslik: "Durum Bildirimi"
+    };
+  session.durumBildirimiSenaryoId = null;
+
+  const lead = leadStore.yeniLeadOlustur({
+    telefon: from,
+    musteriAdi: session.name || null,
+    urun: senaryo.baslik,
+    danismanAdi: null,
+    danismanNumarasi: null,
+    ozet: belge ? `${senaryo.baslik} - belge paylaşıldı.` : `${senaryo.baslik} - belge paylaşılmadı.`
+  });
+
+  if (belge) {
+    leadStore.belgeEkle(lead.id, {
+      dosyaAdi: belge.dosyaAdi || `${senaryo.id}_belgesi${belge.mimeType === "application/pdf" ? ".pdf" : ".jpg"}`,
+      mimeType: belge.mimeType,
+      veriBase64: belge.buffer.toString("base64")
+    });
+  }
+
+  const detay =
+    `🆘 ${senaryo.baslik}\n` +
+    `📌 Müşteri bota doğrudan "${senaryo.id}" ile ilgili bir şey yazdığı için otomatik oluşturuldu.\n\n` +
+    `Müşteri: ${session.name || "(isim alınmadı)"}\n` +
+    `Telefon: ${from}\n` +
+    `Belge: ${belge ? "ekte paylaşıldı ✅" : "paylaşılmadı"}`;
+
+  // Kaza/hasar elementer brans kapsaminda oldugu icin (satistanIptalTalebiOlustur
+  // ile AYNI mantik) her zaman Bahadır + Enbel'e gidecek sekilde sahte bir
+  // "flow" (sadece agentNumber tasiyan) veriyoruz.
+  const bildirilecekNumaralar = guvenlikAgiNumaralari({ agentNumber: BAHADIR_NUMARASI }, BAHADIR_NUMARASI);
+  for (const numara of bildirilecekNumaralar) {
+    await bildirimGonder(numara, senaryo.baslik, session.name || from, from, detay, detay);
+    if (belge) {
+      try {
+        await sendDocument(
+          numara,
+          belge.buffer,
+          belge.mimeType,
+          belge.dosyaAdi || `${senaryo.id}_belgesi${belge.mimeType === "application/pdf" ? ".pdf" : ".jpg"}`
+        );
+      } catch (err) {
+        console.error("Durum bildirimi belgesi ekibe gonderilemedi:", err?.response?.data || err.message);
+      }
+    }
+  }
+
+  await sendText(
+    from,
+    belge
+      ? "Belgenizi aldım, teşekkürler 🙏 Durumu ekibimize ilettim, en kısa sürede sizinle iletişime geçecekler."
+      : "Anladım, durumu ekibimize ilettim 🙏 En kısa sürede sizinle iletişime geçecekler."
+  );
+
+  session.state = "ASK_PRODUCT";
+  await sendList(
+    from,
+    "Bu arada bir sigorta teklifi almak isterseniz aşağıdaki listeden seçebilirsiniz:",
+    "Ürün Seç",
+    ASK_PRODUCT_SECENEKLERI
+  );
+}
 
 // Bazi sorular onceki cevaba gore atlanabilir (question.skipIf(answers) => true/false),
 // bazilari da onceden zaten cevaplanmis olabilir (orn. isim zaten alinmissa "ad_soyad"
@@ -1078,6 +1263,38 @@ async function handleIncoming(from, message) {
   // (orn. kasko arac fotograflari) ya da "belge" tipindeyse (orn. Trafik/Kasko'da
   // proforma/ruhsat) kabul edilir, aksi halde nazikce "su an fotograf beklemiyoruz" denir.
   if (message.type === "media") {
+    // 04.08.2026 eklendi: bir "durum bildirimi" (kaza/hasar) senaryosunda
+    // istege bagli belge bekleniyorsa (bkz. ASK_PRODUCT case'indeki
+    // durumBildirimiSenaryosuBul cagrisi), asagidaki normal ASKING/coklu_foto/
+    // belge mantigina HIC girmeden burada ayrica/erken ele aliniyor - bu
+    // durum bir urun akisinin (flow) PARCASI degil, session.product bile
+    // tanimli olmayabilir.
+    if (session.state === "DURUM_BILDIRIMI_BELGE_BEKLE") {
+      const belgeTuruUygunMu =
+        message.mimeType && (message.mimeType.startsWith("image/") || message.mimeType === "application/pdf");
+      if (!belgeTuruUygunMu) {
+        await sendText(from, "Lütfen belgeyi fotoğraf ya da PDF olarak gönderir misiniz? 🙏");
+        return;
+      }
+      try {
+        const { buffer, mimeType } = await mediaIndir(message.mediaId);
+        const gercekMime = message.mimeType || mimeType;
+        await durumBildirimiTamamla(from, session, {
+          buffer,
+          mimeType: gercekMime,
+          dosyaAdi: message.dosyaAdi
+        });
+      } catch (err) {
+        console.error("Durum bildirimi belgesi indirilemedi:", err?.response?.data || err.message);
+        await sendText(
+          from,
+          "Belgeyi alırken bir sorun oluştu 🙏 Yine de durumu ekibimize ilettim, dilerseniz sonra tekrar gönderebilirsiniz."
+        );
+        await durumBildirimiTamamla(from, session, null);
+      }
+      return;
+    }
+
     const flow = session.product ? flows[session.product] : null;
     const currentQuestion = session.state === "ASKING" && flow ? flow.questions[session.questionIndex] : null;
     const belgeSorusuMu = currentQuestion && currentQuestion.type === "belge";
@@ -1558,6 +1775,37 @@ async function handleIncoming(from, message) {
       // bu secilirse musteri urun-secimli SSS akisina (ASK_INFO_PRODUCT) yonlendirilir.
       const matchedLabel = matchOption(userText, ASK_PRODUCT_SECENEKLERI);
       if (!matchedLabel) {
+        // 04.08.2026 eklendi: listeden bir secim yerine serbest bir metin
+        // yazdiysa (orn. "kaza yaptım"), listeye gecersiz-secim diye geri
+        // donmeden ONCE bunun bilinen bir "durum bildirimi" senaryosuyla
+        // (bkz. DURUM_BILDIRIMI_SENARYOLARI) eslesip eslesmedigine bakiyoruz.
+        // SADECE gercek serbest metinde calisir (interaktif liste/buton
+        // cevabinda calismaz) - bkz. yukaridaki genis yorum.
+        if (message.type !== "interactive") {
+          // 04.08.2026 eklendi: dogrudan (bir kaza YASAMADAN) bos tutanak
+          // istegi, "kaza" senaryosundan ONCE kontrol edilir - bkz.
+          // KAZA_TUTANAGI_BELGE_ISTEK_REGEX'in yukaridaki genis yorumu.
+          if (KAZA_TUTANAGI_BELGE_ISTEK_REGEX.test(normalizeTr(userText))) {
+            await kazaTutanagiPdfGonder(
+              from,
+              "Tabii, işte boş Maddi Hasarlı Trafik Kazası Tespit Tutanağı formu 📄 Çıktı alıp yanınızda bulundurabilir, kaza anında da kullanabilirsiniz."
+            );
+            break;
+          }
+          const senaryo = durumBildirimiSenaryosuBul(userText);
+          if (senaryo) {
+            session.durumBildirimiSenaryoId = senaryo.id;
+            session.state = "DURUM_BILDIRIMI_BELGE_BEKLE";
+            await sendText(from, senaryo.bilgilendirmeMetni);
+            // 04.08.2026 eklendi: kaza bildiren musteriye, elinde hazir bir
+            // tutanak yoksa diye, bos formu da HEMEN gonderiyoruz - boylece
+            // isterse cikti alip kaza yerinde (ya da su an) doldurabilir.
+            if (senaryo.id === "kaza") {
+              await kazaTutanagiPdfGonder(from, null);
+            }
+            break;
+          }
+        }
         await sendList(
           from,
           "Üzgünüm, listeden bir seçenek seçmeniz gerekiyor. Lütfen tekrar seçin:",
@@ -1579,6 +1827,20 @@ async function handleIncoming(from, message) {
       const idx = PRODUCT_LABELS.indexOf(matchedLabel);
       const devredildi = await startProductFlow(from, session, PRODUCT_KEYS[idx]);
       if (!devredildi) await askCurrentQuestion(from, session);
+      break;
+    }
+
+    // 04.08.2026 eklendi: bir "durum bildirimi" (kaza/hasar) senaryosu
+    // tetiklendikten sonra, musteriden ISTEGE BAGLI bir belge bekleniyor -
+    // bir FOTOGRAF/PDF gonderirse bu case'e HIC DUSMEZ (message.type ===
+    // "media" oldugu icin, bkz. handleIncoming basindaki media isleyicisi
+    // ve oradaki YENI "DURUM_BILDIRIMI_BELGE_BEKLE" kontrolu). Buraya
+    // SADECE metin/interaktif bir cevap ("yok" gibi bir vazgecme, ya da
+    // baska herhangi bir sey) geldiginde dusulur - hangi metin olursa
+    // olsun, belgesiz olarak bildirimi tamamliyoruz (musteriyi belge
+    // vermeye zorlamiyoruz, sadece durumu ekibe iletiyoruz).
+    case "DURUM_BILDIRIMI_BELGE_BEKLE": {
+      await durumBildirimiTamamla(from, session, null);
       break;
     }
 

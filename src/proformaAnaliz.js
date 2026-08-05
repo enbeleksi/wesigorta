@@ -57,6 +57,12 @@ async function proformaAnalizEt(buffer, mimeType) {
                 "- Model Yılı (varsa)\n" +
                 "- T.C. Kimlik No (proformalarda genellikle YER ALMAZ, yoksa null döndür, uydurma)\n" +
                 "- Plaka (araç henüz tescil edilmediği için genellikle YER ALMAZ, yoksa null döndür, uydurma)\n\n" +
+                "ÖNEMLİ: Gönderilen görsel/belge GERÇEKTEN bir proforma/satış teklifi belgesi olmalı (bayi " +
+                "başlığı, fiyat kalemleri, teklif no vb. içeren yazılı bir belge). Eğer görsel sadece aracın " +
+                "kendisinin (belgesiz) bir fotoğrafıysa, bir ruhsat/tescil belgesiyse, ya da proforma DIŞINDA " +
+                "başka bir şeyse, okunabilir alanını false yap ve aciklama alanında bunun bir proforma " +
+                "olmadığını (ne olduğunu tahmin edebiliyorsan belirterek) yaz - görünen bir araç markası/modeli " +
+                "varmış gibi TAHMİN ederek alanları uydurma.\n\n" +
                 "SADECE aşağıdaki JSON formatında cevap ver, başka hiçbir metin ekleme:\n" +
                 '{"okunabilir": true ya da false, "ad_soyad": "... ya da null", "marka": "... ya da null", ' +
                 '"model": "... ya da null", "motor_no": "... ya da null", "sasi_no": "... ya da null", ' +
