@@ -4015,6 +4015,30 @@ async function handleAdvisorMessage(from, parsed) {
         await sendText(from, "Rica ederim, her zaman buradayım 🙌 Yeni satışlarını bekliyorum!");
         return;
       }
+      // 05.08.2026 eklendi (Enbel'in talebi): musteri tarafindaki ASK_PRODUCT
+      // serbest metin islenmesiyle AYNI mantik - danisman da ana menudeyken
+      // (hicbir secenegi secmeden) dogrudan genel bir sigortacilik sorusu
+      // yazarsa ("BES nedir" gibi), menuye "gecersiz secim" diye geri
+      // donmeden ONCE genelSigortaBilgisi.js'e (conversationEngine.js
+      // uzerinden, bkz. BILGI_SORU_MODULLERI.genel_sigorta_bilgi) soruluyor.
+      // SADECE serbest metinde (parsed.type === "text") calisir - bir liste/
+      // buton cevabinin (interactive) burada YANLISLIKLA bir soru sanilmasi
+      // soz konusu degil. Modul eslesme bulamazsa (TAM OLARAK kendi
+      // DANISMAN_YONLENDIRME_MESAJI'ni donerse) bu "eslesme yok" sayilir ve
+      // normal ana menu tekrar gosterilir - bkz. conversationEngine.js'teki
+      // AYNI karsilastirma mantiginin genis yorumu.
+      if (parsed.type === "text") {
+        const serbestMetinTemiz = (userText || "").trim();
+        if (serbestMetinTemiz.replace(/\s+/g, "").length >= 4) {
+          const genelBilgiModulu = conversationEngine.BILGI_SORU_MODULLERI.genel_sigorta_bilgi;
+          const genelCevap = await genelBilgiModulu.soruyaCevapVer(serbestMetinTemiz);
+          if (genelCevap && genelCevap !== genelBilgiModulu.DANISMAN_YONLENDIRME_MESAJI) {
+            await sendText(from, genelCevap);
+            await devamMenuGoster(from, session);
+            return;
+          }
+        }
+      }
       await karsilamaGoster(from, session);
       return;
     }
@@ -4788,7 +4812,20 @@ async function handleAdvisorMessage(from, parsed) {
         return;
       }
 
-      if (conversationEngine.BILGI_SORU_MODULLERI[infoKey]) {
+      if (infoKey === "genel_sigorta_bilgi") {
+        // 05.08.2026 eklendi: musteri tarafindaki (conversationEngine.js'teki
+        // ASK_INFO_PRODUCT case'i) AYNI ozel-durum - genel bilgi hizmeti bir
+        // urune ozel OLMADIGI icin asagidaki genel tanitim metni yerine bu
+        // konuya uygun ayri bir tanitim metni gosteriliyor.
+        session.state = "DANISMAN_SSS_SORU";
+        session.danismanSssUrunAnahtari = infoKey;
+        await sendText(
+          from,
+          "Sigortacılık hakkında merak ettiğiniz genel her şeyi sorabilirsiniz - örneğin sigorta türleri " +
+            "arasındaki farklar, temel kavramlar (prim, teminat, muafiyet vb.), BES, vergi avantajları gibi " +
+            "konularda size bilgi verebilirim 😊\n\nSorunuzu yazabilirsiniz."
+        );
+      } else if (conversationEngine.BILGI_SORU_MODULLERI[infoKey]) {
         session.state = "DANISMAN_SSS_SORU";
         session.danismanSssUrunAnahtari = infoKey;
         await sendText(

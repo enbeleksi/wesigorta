@@ -13,6 +13,14 @@ const sozlukSSS = require("./sozlukSSS");
 const tssOzelSartSSS = require("./tssOzelSartSSS");
 const ozelSaglikOzelSartSSS = require("./ozelSaglikOzelSartSSS");
 const dogumSigortasiOzelSartSSS = require("./dogumSigortasiOzelSartSSS");
+// 05.08.2026 eklendi: Enbel'in sagladigi 7 genel egitim dokumanina (bkz.
+// genelSigortaBilgisi.js basindaki genis yorum) dayanan, TEK bir urune ozel
+// OLMAYAN genel sigortacilik soru-cevap motoru - hem "Sık Sorulan Sorular"
+// menusune EK bir secenek olarak (bkz. GENEL_BILGI_ANAHTARI/ETIKETI) hem de
+// musteri hicbir menu secmeden serbest metinle genel bir sigorta sorusu
+// yazdiginda (bkz. ASK_PRODUCT case'indeki serbest metin islenmesi)
+// kullanilir.
+const genelSigortaBilgisi = require("./genelSigortaBilgisi");
 // 31.07.2026 eklendi: "Sık Sorulan Sorular" akisinda "Bireysel Emeklilik(BES)"
 // secildiginde (bkz. ASK_INFO_PRODUCT case'i), TSS/ÖSS/Doğum'un aksine serbest
 // soru-cevap moduna GIRILMIYOR - onun yerine BES fon listesi (+ best-effort
@@ -86,7 +94,8 @@ const ASK_PRODUCT_SECENEKLERI = [...PRODUCT_LABELS, SSS_ETIKETI];
 const BILGI_SORU_MODULLERI = {
   tss: tssOzelSartSSS,
   ozel_saglik: ozelSaglikOzelSartSSS,
-  dogum_sigortasi_bilgi: dogumSigortasiOzelSartSSS
+  dogum_sigortasi_bilgi: dogumSigortasiOzelSartSSS,
+  genel_sigorta_bilgi: genelSigortaBilgisi
 };
 
 // 31.07.2026 eklendi: "Doğum Sigortası" (Acıbadem'in ayrı ürünü), "Teklif
@@ -99,8 +108,14 @@ const BILGI_SORU_MODULLERI = {
 // oluşturuyoruz.
 const DOGUM_SIGORTASI_BILGI_ANAHTARI = "dogum_sigortasi_bilgi";
 const DOGUM_SIGORTASI_BILGI_ETIKETI = "Doğum Sigortası";
-const INFO_PRODUCT_KEYS = [...PRODUCT_KEYS, DOGUM_SIGORTASI_BILGI_ANAHTARI];
-const INFO_PRODUCT_LABELS = [...PRODUCT_LABELS, DOGUM_SIGORTASI_BILGI_ETIKETI];
+// 05.08.2026 eklendi: Doğum Sigortası ile AYNI mantik - kendi basina bir
+// "urun" (flows.js'te tanimli) DEGIL, sadece "Sık Sorulan Sorular" bilgi
+// akisina EK bir secenek. Musteri sectiginde dogrudan genelSigortaBilgisi.js
+// modulunun soru-cevap moduna girer (bkz. BILGI_SORU_MODULLERI).
+const GENEL_BILGI_ANAHTARI = "genel_sigorta_bilgi";
+const GENEL_BILGI_ETIKETI = "Genel Sigorta Bilgisi";
+const INFO_PRODUCT_KEYS = [...PRODUCT_KEYS, DOGUM_SIGORTASI_BILGI_ANAHTARI, GENEL_BILGI_ANAHTARI];
+const INFO_PRODUCT_LABELS = [...PRODUCT_LABELS, DOGUM_SIGORTASI_BILGI_ETIKETI, GENEL_BILGI_ETIKETI];
 // ASK_INFO_PRODUCT'ta hem "hangi urun icin bilgi hizmeti tanitim mesaji
 // gosterilecek" hem de "desteklenmeyen urun" fallback mesajinda urun adini
 // yazdirmak icin - flows[key].label DOGUM_SIGORTASI_BILGI_ANAHTARI icin
@@ -1805,6 +1820,35 @@ async function handleIncoming(from, message) {
             }
             break;
           }
+          // 05.08.2026 eklendi: kaza tutanagi/durum bildirimi senaryolarindan
+          // HICBIRIYLE eslesmeyen serbest metin, dogrudan gecersiz-secim
+          // mesajina dusmeden ONCE genelSigortaBilgisi.js'e (7 egitim
+          // dokumanina dayanan grounded Q&A) soruluyor - musteri "kasko ile
+          // trafik sigortasi farki ne" gibi genel bir soru yazarsa (hicbir
+          // menu secmeden) dogrudan cevap alabilsin diye (Enbel'in "botla
+          // sohbet edebilir mi" talebi). Belgede cevap YOKSA (modul TAM
+          // OLARAK DANISMAN_YONLENDIRME_MESAJI donerse) bu "eslesme yok"
+          // sayilir ve normal gecersiz-secim akisina devam edilir - boylece
+          // gercekten alakasiz/hatali bir menu secimi (orn. yazim hatasi)
+          // yanlislikla "danismaninizla gorusun" gibi kafa karistirici bir
+          // cevapla karsilanmaz. Cok kisa metinler (orn. tek kelimelik bir
+          // yazim hatasi) icin gereksiz API cagrisi yapmamak adina EN AZ 4
+          // (bosluksuz) karakter sarti araniyor - bu SADECE bir maliyet/
+          // gurultu filtresi, esneklik amacli kucuk tutuldu.
+          const serbestMetinTemiz = (userText || "").trim();
+          if (serbestMetinTemiz.replace(/\s+/g, "").length >= 4) {
+            const genelCevap = await genelSigortaBilgisi.soruyaCevapVer(serbestMetinTemiz);
+            if (genelCevap && genelCevap !== genelSigortaBilgisi.DANISMAN_YONLENDIRME_MESAJI) {
+              await sendText(from, genelCevap);
+              await sendList(
+                from,
+                "Başka bir sorunuz var mı? Yoksa bir sigorta teklifi almak isterseniz aşağıdaki listeden seçebilirsiniz:",
+                "Ürün Seç",
+                ASK_PRODUCT_SECENEKLERI
+              );
+              break;
+            }
+          }
         }
         await sendList(
           from,
@@ -1885,7 +1929,20 @@ async function handleIncoming(from, message) {
         break;
       }
 
-      if (BILGI_SORU_MODULLERI[infoKey]) {
+      if (infoKey === GENEL_BILGI_ANAHTARI) {
+        // 05.08.2026 eklendi: digerlerinin ("... ile ilgili merak ettiğiniz
+        // her şeyi sorabilirsiniz - örn. bekleme süreleri, istisnalar vb.")
+        // aksine bu urune ozel DEGIL, genel bir bilgi hizmeti - tanitim
+        // mesaji da buna gore ayri/uygun bir dille yazildi.
+        session.state = "URUN_BILGI_SORU";
+        session.bilgiUrunAnahtari = infoKey;
+        await sendText(
+          from,
+          "Sigortacılık hakkında merak ettiğiniz genel her şeyi sorabilirsiniz - örneğin sigorta türleri " +
+            "arasındaki farklar, temel kavramlar (prim, teminat, muafiyet vb.), BES, vergi avantajları gibi " +
+            "konularda size bilgi verebilirim 😊\n\nSorunuzu yazabilirsiniz."
+        );
+      } else if (BILGI_SORU_MODULLERI[infoKey]) {
         session.state = "URUN_BILGI_SORU";
         // Hangi urunun (dolayisiyla hangi PDF'e dayanan modulun) secildigini
         // sakliyoruz - TSS ve ÖSS artik AYRI belgelere dayandigi icin, soru

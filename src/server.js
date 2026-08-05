@@ -1607,16 +1607,37 @@ function yenilemeSonTarihiKisaGoster(ms) {
 }
 
 function acikIsSatiriOlustur(lead) {
-  const gunSayisi = Math.max(0, Math.floor((Date.now() - lead.olusturulmaZamani) / (24 * 60 * 60 * 1000)));
   const sonNot = lead.notlar && lead.notlar.length > 0 ? lead.notlar[lead.notlar.length - 1] : null;
   const notEki = sonNot ? `\n   📝 ${sonNot.metin}` : "";
   // 27.07.2026 eklendi: destek talebi gibi bir "baslik" tasiyan kayitlarda,
   // urun'un yaninda 🆘 ile baslik da gosterilir (bkz. leadStore.js'deki
   // yeniLeadOlustur'un baslik alani, advisorEngine.js'deki destekTalebiGonder).
   const anaEtiket = lead.baslik ? `🆘 ${lead.baslik} (${lead.urun})` : lead.urun;
+  const danismanEki = lead.danismanAdi ? ` (${lead.danismanAdi})` : "";
   const yenilemeTarihi = yenilemeSonTarihiKisaGoster(lead.yenilemeBitisTarihi);
-  const yenilemeEki = yenilemeTarihi ? ` (⏳ ${yenilemeTarihi})` : "";
-  return `• ${lead.musteriAdi || lead.telefon} - ${anaEtiket}${lead.danismanAdi ? ` (${lead.danismanAdi})` : ""}${yenilemeEki} - ${gunSayisi} gündür açık${notEki}`;
+
+  // 05.08.2026 DUZELTILDI (Enbel'in talebi: "hala poliçelerin yenilenmesi
+  // gereken son tarih değil, bekleyen işin kaç gündür açık olduğu yazıyordu,
+  // bu bilgi bizim hiçbir işimize yaramıyor"): eskiden yenileme kaynakli
+  // kayitlarda BILE "X gündür açık" HER ZAMAN gosteriliyordu, yenileme
+  // tarihi varsa sadece yanina parantez icinde EKLENIYORDU - halbuki bir
+  // yenileme takip kaydinin "kaç gündür açık" oldugu (ne zaman sisteme
+  // eklendigi) danisman icin anlamsiz, onemli olan POLIÇENIN NE ZAMAN
+  // yenilenmesi gerektigi. Bu yuzden yenileme kaynakli bir kayitta (lead.
+  // yenilemeBitisTarihi doluysa) "gündür açık" ifadesi TAMAMEN KALDIRILDI,
+  // yerine yenileme tarihi ON PLANA cikarildi - suresi coktan gecmisse (bkz.
+  // advisorEngine.js'teki AYNI mantiga sahip gecikmisYenilemeMi) 🔴, henuz
+  // gecmemisse ⏳ ikonuyla. Yenileme kaynakli OLMAYAN (gercek Bekleyen İş)
+  // kayitlarda ise "X gündür açık" bilgisi hala anlamli/faydali oldugu icin
+  // AYNEN korunuyor.
+  if (yenilemeTarihi) {
+    const gecikmisMi = typeof lead.yenilemeBitisTarihi === "number" && lead.yenilemeBitisTarihi < Date.now();
+    const ikon = gecikmisMi ? "🔴" : "⏳";
+    return `• ${lead.musteriAdi || lead.telefon} - ${anaEtiket}${danismanEki} - ${ikon} Yenileme: ${yenilemeTarihi}${notEki}`;
+  }
+
+  const gunSayisi = Math.max(0, Math.floor((Date.now() - lead.olusturulmaZamani) / (24 * 60 * 60 * 1000)));
+  return `• ${lead.musteriAdi || lead.telefon} - ${anaEtiket}${danismanEki} - ${gunSayisi} gündür açık${notEki}`;
 }
 
 // 26.07.2026 eklendi: her sabah AYNI "☀️ Günaydın!" yerine, gunden gune
