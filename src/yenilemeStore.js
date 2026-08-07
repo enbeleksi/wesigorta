@@ -86,7 +86,12 @@ function zamaniGelenYenilemeler(esikGunSayisi = 15, maksimumGecikmeGunSayisi = 3
   const ufukTarihi = simdi + esikGunSayisi * GUN_MS;
   const enEskiGecerliTarih = simdi - maksimumGecikmeGunSayisi * GUN_MS;
   return tumYenilemeleriGetir().filter(
-    (y) => !y.bekleyenIseAktarildiMi && y.bitisTarihi <= ufukTarihi && y.bitisTarihi >= enEskiGecerliTarih
+    (y) =>
+      !y.bekleyenIseAktarildiMi &&
+      y.bitisTarihi <= ufukTarihi &&
+      y.bitisTarihi >= enEskiGecerliTarih &&
+      !bitisYiliGecmisMi(y.bitisTarihi) &&
+      !yenilemesiOlmayanUrunMu(y.urun)
   );
 }
 
@@ -97,10 +102,25 @@ function zamaniGelenYenilemeler(esikGunSayisi = 15, maksimumGecikmeGunSayisi = 3
 // gelmis) kayitlari bulmak icin - server.js'deki temizlik gorevi
 // (eskiYenilemeBekleyenIslerTemizle) bunlarin leadStore'daki karsiligi olan
 // "Açık" talebi geri kaldirir.
+// 07.08.2026 GENISLETILDI: eskiden SADECE gun-bazli asiri-gecikme sinirini
+// (yukaridaki maksimumGecikmeGunSayisi) asmis kayitlari yakaliyordu. Artik
+// AYRICA (a) bitis YILI tamamen gecmis (bitisYiliGecmisMi) VE (b) Yeşil
+// Kart/Seyahat Sağlık gibi yenilemesi olmayan bir urun (yenilemesiOlmayanUrunMu)
+// olan, ama daha ONCE (bu kurallar eklenmeden once) zaten "Bekleyen İş"e
+// donusturulmus kayitlari da yakalar - boylece server.js'deki temizlik
+// gorevi (eskiYenilemeBekleyenIslerTemizle) bunlarin leadStore'daki
+// karsiligi olan "Açık" talebi de geri kaldirir. NOT: bu sadece leadStore'daki
+// LEAD'i temizler, buradaki (yenilemeler Map'indeki) ALT KAYIT panelin
+// "Üretim" sekmesinde gorunmeye devam eder (gecmis veri kaybolmaz) - istenirse
+// panelden elle silinebilir (yenilemeSil).
 function cokEskiOtomatikDonusturulmusYenilemeler(maksimumGecikmeGunSayisi = 30) {
   const GUN_MS = 24 * 60 * 60 * 1000;
   const enEskiGecerliTarih = Date.now() - maksimumGecikmeGunSayisi * GUN_MS;
-  return tumYenilemeleriGetir().filter((y) => y.bekleyenIseAktarildiMi && y.bitisTarihi < enEskiGecerliTarih);
+  return tumYenilemeleriGetir().filter(
+    (y) =>
+      y.bekleyenIseAktarildiMi &&
+      (y.bitisTarihi < enEskiGecerliTarih || bitisYiliGecmisMi(y.bitisTarihi) || yenilemesiOlmayanUrunMu(y.urun))
+  );
 }
 
 function yenilemeBekleyenIseAktarildiIsaretle(id) {
@@ -262,6 +282,39 @@ function urunDurumuCoz(urunHam) {
   return { baseTipi, terminationEvent, sadeceDonemIciDegisiklik };
 }
 
+// 07.08.2026 eklendi (Enbel'in talebi): Yeşil Kart ve Seyahat Sağlık
+// sigortalarinin YENİLEMESİ YOK (tek seferlik/donemlik urunler, poliçe
+// bitince otomatik olarak "bir sonraki donem" diye bir sey olmuyor) - bu
+// yuzden bu iki urun turu hicbir zaman yenileme takibine/"Bekleyen İş"/
+// "Gecikmiş İş" listelerine eklenmemeli. Serbest metin urun alanlarindan
+// (Excel/panel - flows.js'teki gercek urun listesinde bu ikisi zaten YOK,
+// bu yuzden sadece bu iki giris yolunda kontrol gerekiyor) anahtar kelime
+// ile tespit ediliyor.
+function yenilemesiOlmayanUrunMu(urunHam) {
+  const normalized = normalizeTr(urunHam).trim();
+  return normalized.includes("yesil kart") || normalized.includes("seyahat sag");
+}
+
+// 07.08.2026 eklendi (Enbel'in talebi): bir police tam bir yenileme
+// donemini (takvim yili) kacirmissa - yani bitis tarihinin TAKVIM YILI,
+// icinde bulunulan takvim yilindan once tamamen gecmisse - artik "Bekleyen
+// İş"/"Gecikmiş İş"e hic eklenmesin/eklenmis olsa bile temizlensin istendi
+// (orn. 2024 tanzimli/2025 bitisli bir police 2025 icinde yenilenmediyse,
+// 2026'da tekrar hatirlatilmasin). Sabit yillara ("2025"/"2026") baglamak
+// yerine, kural her zaman "bitis tarihinin YILI, SIMDIKI YILDAN kesin
+// olarak once mi" sorusuna bakiyor - boylece her gelecek yil icin de elle
+// guncelleme gerekmeden dogru calisir. Var olan gun-bazli
+// maksimumGecikmeGunSayisi (30 gun, bkz. asagida) siniriyla BIRLIKTE
+// calisir, onun yerine gecmez - ikisinden hangisi daha erken devreye
+// girerse o uygulanir.
+const TURKIYE_UTC_FARKI_MS = 3 * 60 * 60 * 1000;
+function bitisYiliGecmisMi(bitisTarihi) {
+  if (typeof bitisTarihi !== "number" || isNaN(bitisTarihi)) return false;
+  const simdikiYil = new Date(Date.now() + TURKIYE_UTC_FARKI_MS).getUTCFullYear();
+  const bitisYili = new Date(bitisTarihi + TURKIYE_UTC_FARKI_MS).getUTCFullYear();
+  return bitisYili < simdikiYil;
+}
+
 // 01.08.2026 eklendi: Enbel'in belirttigi uzere, uretim dosyasinin "ARACI"
 // sutununda bazen bir danismanin adi yerine soyadi kullanilmis (orn.
 // "KURAL" = Seda Kural). Dogrudan isim eslesmesi bulunamayinca burada da
@@ -389,6 +442,18 @@ function uretimExceliYukle(buffer, dosyaAdi) {
     const musteriAdi = (k.musteriAdi || "").toString().trim();
     const urunHam = (k.urun || "").toString().trim();
     if (!musteriAdi || !urunHam) return; // basliksiz/bos/ara satirlar - sessizce atla (hata degil)
+
+    // 07.08.2026 eklendi (Enbel'in talebi): Yeşil Kart/Seyahat Sağlık'in
+    // yenilemesi yok - bu satirlar hic yenileme takibine girmesin.
+    if (yenilemesiOlmayanUrunMu(urunHam)) {
+      atlanan.push({
+        satirNo,
+        adSoyad: musteriAdi,
+        urun: urunHam,
+        sebep: "Bu ürünün yenilemesi yok (Yeşil Kart/Seyahat Sağlık) - yenileme takibine eklenmedi"
+      });
+      return;
+    }
 
     const tarih = tarihiCikar(k.tanzimTarihi);
     if (!tarih) {
@@ -554,6 +619,15 @@ function panelUretimSatiriEkle({ musteriAdi, danismanAdi, policeNo, tanzimTarihi
   const urunHam = (urun || "").toString().trim();
   if (!musteriAdiTemiz) return { hata: "Sigortalı adı soyadı zorunlu." };
   if (!urunHam) return { hata: "Ürün bilgisi zorunlu." };
+
+  // 07.08.2026 eklendi (Enbel'in talebi): Yeşil Kart/Seyahat Sağlık'in
+  // yenilemesi yok - panelden tek satir girilirken de bu urunler icin
+  // yenileme kaydi olusturulmasin.
+  if (yenilemesiOlmayanUrunMu(urunHam)) {
+    return {
+      bilgi: "Bu ürünün (Yeşil Kart/Seyahat Sağlık) yenilemesi olmadığı için herhangi bir yenileme kaydı oluşturulmadı."
+    };
+  }
 
   const tarih = tarihiCikar(tanzimTarihi);
   if (!tarih) return { hata: "Tanzim tarihi okunamadı - lütfen geçerli bir tarih girin." };

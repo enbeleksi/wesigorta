@@ -1480,9 +1480,18 @@ async function leadDetayGoster(from, session, lead) {
   // cikti - WhatsApp'in interaktif DUGME (button_reply) tipi en fazla 3
   // secenek destekliyor, bu yuzden sendButtons yerine sendList'e (interaktif
   // LISTE, 10 satira kadar destekler) gecildi.
+  // 07.08.2026 eklendi: eskiden "Olumlu"/"Olumsuz" kapatmak icin once
+  // "Durum Değiştir" secilip, sonra ayri bir listeden durum secmek
+  // gerekiyordu (bkz. asagidaki DANISMAN_LEAD_DETAY case'i eski hali).
+  // Kullanicinin talebi uzerine bu ekstra adim kaldirildi, "Olumlu Kapat"/
+  // "Olumsuz Kapat" artik dogrudan bu ilk listede. "Durum Değiştir"
+  // WhatsApp akisinda sadece bu ikisi icin kullaniliyordu (yeniden "Açık"a
+  // alma islemi sadece panelden yapiliyor, bkz. server.js), o yuzden
+  // kaldirildi.
   await sendList(from, "Ne yapmak istersiniz?", "Seçin", [
+    "Olumlu Kapat",
+    "Olumsuz Kapat",
     "Not Ekle",
-    "Durum Değiştir",
     "Hatırlatma Kur",
     "🚫 Numarayı Engelle"
   ]);
@@ -4146,15 +4155,22 @@ async function handleAdvisorMessage(from, parsed) {
     }
 
     case "DANISMAN_LEAD_DETAY": {
-      userText = matchOption(userText, ["Not Ekle", "Durum Değiştir", "Hatırlatma Kur", "🚫 Numarayı Engelle"]) || userText;
+      userText =
+        matchOption(userText, ["Olumlu Kapat", "Olumsuz Kapat", "Not Ekle", "Hatırlatma Kur", "🚫 Numarayı Engelle"]) ||
+        userText;
+      // 07.08.2026 eklendi: eskiden Olumlu/Olumsuz kapatmak icin once
+      // "Durum Değiştir" secilip ayri bir listeden durum secmek
+      // gerekiyordu - artik dogrudan bu iki secenek burada.
+      if (userText === "Olumlu Kapat" || userText === "Olumsuz Kapat") {
+        const yeniDurum = userText === "Olumlu Kapat" ? "Olumlu Kapandı" : "Olumsuz Kapandı";
+        leadStore.durumGuncelle(session.danismanSeciliLeadId, yeniDurum);
+        await sendText(from, `Durum "${yeniDurum}" olarak güncellendi ✅`);
+        await devamMenuGoster(from, session);
+        return;
+      }
       if (userText === "Not Ekle") {
         session.state = "DANISMAN_NOT_BEKLE";
         await sendText(from, "Notunuzu yazar mısınız?");
-        return;
-      }
-      if (userText === "Durum Değiştir") {
-        session.state = "DANISMAN_DURUM_BEKLE";
-        await sendList(from, "Yeni durumu seçin:", "Durum Seç", leadStore.DURUMLAR);
         return;
       }
       if (userText === "Hatırlatma Kur") {
