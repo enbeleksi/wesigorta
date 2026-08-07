@@ -150,6 +150,28 @@ module.exports = function (app, pool) {
   // pozisyonel formatını değil, küçük harf + alt çizgili adlandırılmış
   // değişkenleri istiyor - orn. {{musteri_adi}} - o yüzden her parametrede
   // "parameter_name" alanı da gönderiliyor, sadece sıralı bir dizi değil).
+  // Serbest metin gonderimi (satir satir bicim korunur; 24 saat penceresi acik olmali)
+  async function metinGonder(numara, metin) {
+    const response = await fetch(
+      'https://graph.facebook.com/v19.0/' + process.env.WHATSAPP_PHONE_NUMBER_ID + '/messages',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer ' + process.env.WHATSAPP_TOKEN,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          messaging_product: 'whatsapp',
+          to: numara,
+          type: 'text',
+          text: { body: metin }
+        })
+      }
+    );
+    if (!response.ok) throw new Error('metin gonderilemedi: ' + response.status);
+    return response;
+  }
+
   async function sablonGonder(numara, sablonAdi, parametreler) {
     const response = await fetch(
       'https://graph.facebook.com/v19.0/' + process.env.WHATSAPP_PHONE_NUMBER_ID + '/messages',
@@ -227,7 +249,13 @@ module.exports = function (app, pool) {
     const sablonAdi = process.env.TEKLIF_EKIP_TEMPLATE_NAME;
     if (sablonAdi) {
       try {
-        await sablonGonder(numara, sablonAdi, { detay: sablonIcinTemizle(zenginMetin) });
+        // Once satir satir serbest metin dene; pencere kapaliysa onayli sablona dus
+        let metinGitti = false;
+        try { await metinGonder(numara, zenginMetin); metinGitti = true; } catch (mh) {}
+        if (!metinGitti) {
+          // Sablonun kendi basligi oldugu icin mesajdaki basligi cikar (mukerrerlik onlenir)
+          await sablonGonder(numara, sablonAdi, { detay: sablonIcinTemizle(zenginMetin.replace(/^[^\n]*Yeni Web Teklifi[^\n]*\n+/, '')) });
+        }
         return; // basarili - sablon zaten TUM detayi (mesaj) iletti
       } catch (e) {
         console.error('Ekip şablon bildirimi gönderilemedi (' + numara + '):', e.message);
