@@ -2032,6 +2032,15 @@ baslat();
 // icin asagida (app.post("/webhook", ...)) kullaniliyor.
 const teklifYardimcilari = require('./teklifEndpoint')(app, db.pool);
 
+// 08.08.2026 eklendi: web sitesindeki vergi avantaji hesaplayicisinin
+// musteriye PDF simulasyonu e-posta ile gonderme ozelligi (Resend API
+// uzerinden, POST /api/teklif/eposta). BU DOSYA (src/webEposta.js) VE BU
+// REQUIRE SATIRI Enbel'in ACIK talebi uzerine BURADA/BU SEKILDE KORUNACAK:
+// webEposta.js web sitesi tarafina ait, chatbot gelistirmeleri (bu
+// server.js'teki degisiklikler dahil) o dosyaya KESINLIKLE dokunmamali -
+// icerigi degistirilmeden, oldugu gibi tasinmali/korunmalidir.
+require('./webEposta')(app);
+
 // 28.07.2026 eklendi: Malpraktis icin urun-ozel web teklif formu (GET
 // /teklif/malpraktis - formu servis eder; POST /api/web-teklif/malpraktis -
 // cevaplari alir, dogrular, Bahadır'a/Enbel'e/varsa danışmana bildirim
