@@ -67,7 +67,6 @@
 const leadStore = require('./leadStore');
 
 module.exports = function (app, pool) {
-  const express = require('express');
   const IZINLI_ORIGINLER = [
     'https://wesigorta.com.tr',
     'https://www.wesigorta.com.tr'
@@ -150,28 +149,6 @@ module.exports = function (app, pool) {
   // pozisyonel formatını değil, küçük harf + alt çizgili adlandırılmış
   // değişkenleri istiyor - orn. {{musteri_adi}} - o yüzden her parametrede
   // "parameter_name" alanı da gönderiliyor, sadece sıralı bir dizi değil).
-  // Serbest metin gonderimi (satir satir bicim korunur; 24 saat penceresi acik olmali)
-  async function metinGonder(numara, metin) {
-    const response = await fetch(
-      'https://graph.facebook.com/v19.0/' + process.env.WHATSAPP_PHONE_NUMBER_ID + '/messages',
-      {
-        method: 'POST',
-        headers: {
-          Authorization: 'Bearer ' + process.env.WHATSAPP_TOKEN,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          messaging_product: 'whatsapp',
-          to: numara,
-          type: 'text',
-          text: { body: metin }
-        })
-      }
-    );
-    if (!response.ok) throw new Error('metin gonderilemedi: ' + response.status);
-    return response;
-  }
-
   async function sablonGonder(numara, sablonAdi, parametreler) {
     const response = await fetch(
       'https://graph.facebook.com/v19.0/' + process.env.WHATSAPP_PHONE_NUMBER_ID + '/messages',
@@ -249,13 +226,7 @@ module.exports = function (app, pool) {
     const sablonAdi = process.env.TEKLIF_EKIP_TEMPLATE_NAME;
     if (sablonAdi) {
       try {
-        // Once satir satir serbest metin dene; pencere kapaliysa onayli sablona dus
-        let metinGitti = false;
-        try { await metinGonder(numara, zenginMetin); metinGitti = true; } catch (mh) {}
-        if (!metinGitti) {
-          // Sablonun kendi basligi oldugu icin mesajdaki basligi cikar (mukerrerlik onlenir)
-          await sablonGonder(numara, sablonAdi, { detay: sablonIcinTemizle(zenginMetin.replace(/^[^\n]*Yeni Web Teklifi[^\n]*\n+/, '')) });
-        }
+        await sablonGonder(numara, sablonAdi, { detay: sablonIcinTemizle(zenginMetin) });
         return; // basarili - sablon zaten TUM detayi (mesaj) iletti
       } catch (e) {
         console.error('Ekip şablon bildirimi gönderilemedi (' + numara + '):', e.message);
@@ -286,7 +257,6 @@ module.exports = function (app, pool) {
         aylik_tasarruf_tl INTEGER, yillik_tasarruf_tl INTEGER,
         danisman TEXT, kur NUMERIC, kaynak TEXT
       )`);
-      await pool.query('ALTER TABLE web_teklifler ADD COLUMN IF NOT EXISTS eposta TEXT');
     // 24.07.2026 eklemesi: musteri, teklif talebinden sonra WhatsApp'a
     // yazdiginda bildirim+tesekkurun SADECE ILK seferde gitmesi icin.
     await pool.query(`
@@ -311,12 +281,12 @@ module.exports = function (app, pool) {
         `INSERT INTO web_teklifler
          (ad, telefon, kisi_tipi, gelir_aylik_tl, odeme_donemi, prim_usd, prim_tl,
           paket, teminat_usd, yas, cinsiyet, aylik_tasarruf_tl, yillik_tasarruf_tl,
-          danisman, kur, kaynak, eposta)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+          danisman, kur, kaynak)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
         [b.ad, b.telefon, b.kisiTipi || null, b.gelirAylikTL || null, b.odemeDonemi || null,
          b.primUsd || null, b.primTL || null, b.paket || null, b.teminatUsd || null,
          b.yas || null, b.cinsiyet || null, b.aylikTasarrufTL || null, b.yillikTasarrufTL || null,
-         b.danisman || null, b.kur || null, b.kaynak || 'web', b.eposta || null]
+         b.danisman || null, b.kur || null, b.kaynak || 'web']
       );
 
       // --- 2) WhatsApp bildirimi (ekibe) ---
@@ -530,53 +500,6 @@ module.exports = function (app, pool) {
 
     return true;
   }
-
-  // ============================================================
-  // KORUNACAK BLOK: Web hesaplayici - musteriye e-posta ile PDF gonderimi
-  // Bu rota web sitesindeki hesaplayicinin
-  // e-posta ozelligi icin gereklidir; yeni surumlerde SILINMEMELIDIR.
-  // ============================================================
-  app.post('/api/teklif/eposta', express.text({ type: 'text/plain', limit: '15mb' }), async function (req, res) {
-    cors(req, res);
-    try {
-      var eb; try { eb = JSON.parse(req.body || '{}'); } catch (e) { return res.status(400).json({ ok: false }); }
-      if (!process.env.TEKLIF_SECRET || eb.secret !== process.env.TEKLIF_SECRET) return res.status(401).json({ ok: false });
-      if (!eb.eposta || !eb.pdf || String(eb.pdf).indexOf('data:application/pdf') !== 0) return res.status(400).json({ ok: false });
-      if (!process.env.RESEND_API_KEY || !process.env.EPOSTA_GONDEREN_ADRESI) return res.status(503).json({ ok: false });
-      var pdfB64 = String(eb.pdf).split(',')[1] || '';
-      if (pdfB64.length > 14000000) return res.status(413).json({ ok: false });
-      var mAd = String(eb.ad || 'Degerli Musterimiz').slice(0, 80);
-      var dTel = String(eb.danismanTel || '').replace(/\D/g, '');
-      var dTelYazi = (eb.danismanTel && dTel.length === 11) ? ' (Cep: <a href="tel:+9' + dTel + '" style="color:#132F3E;text-decoration:none"><strong>' + String(eb.danismanTel).slice(0, 20) + '</strong></a>)' : '';
-      var dnsSatiri = eb.danisman ? '<p>Danışmanınız <strong>' + String(eb.danisman).slice(0, 60) + '</strong>' + dTelYazi + ', dilerseniz en kısa sürede sizi arayarak simülasyonunuzu birlikte değerlendirecektir.</p>' : '<p>Danışmanlarımız, dilerseniz en kısa sürede sizi arayarak simülasyonunuzu birlikte değerlendirecektir.</p>';
-      var govde = "<div style=\"font-family:Segoe UI,Arial,sans-serif;color:#132F3E;font-size:15px;line-height:1.7;max-width:560px\">"
-        + '<p>Sayın <strong>' + mAd + '</strong>,</p>'
-        + '<p>WE Sigorta hesaplama aracımızı kullanarak oluşturduğunuz <strong>Prim İadeli Hayat Sigortası</strong> simülasyonunuz ekte yer almaktadır. Simülasyonunuzda; ödeyeceğiniz prim, size özel vergi avantajı, yaklaşık vefat teminatınız ve süre sonu prim iadeniz bir arada sunulmuştur.</p>'
-        + dnsSatiri
-        + "<p>Sorularınız için 7/24 WhatsApp hattımızdan bize ulaşabilirsiniz: <a href=\"https://wa.me/908502209361?text=Merhaba%2C%20prim%20iadeli%20hayat%20sigortas%C4%B1%20i%C3%A7in%20teklif%20almak%20istiyorum.\" style=\"color:#0B6E4F\"><strong>0850 220 93 61</strong></a><br>Web: <a href=\"https://wesigorta.com.tr\">wesigorta.com.tr</a></p>"
-        + "<p>Sağlıklı günler dileriz.<br><strong>WE Sigorta</strong><br><span style=\"color:#41606F;font-size:13px\">Yetkili Garanti BBVA Emeklilik Acentesi</span></p>"
-        + "<p style=\"color:#7A8F98;font-size:11px\">Bu belge bilgilendirme amaçlı bir ön çalışmadır; kesin prim, teminat ve şartlar Garanti BBVA Emeklilik ve Hayat A.Ş. tarafından poliçe teklifinde belirlenir.</p>"
-        + '</div>';
-      var istek = {
-        from: 'WE Sigorta <' + process.env.EPOSTA_GONDEREN_ADRESI + '>',
-        to: [String(eb.eposta).slice(0, 120)],
-        subject: 'Prim İadeli Hayat Sigortası Simülasyonu',
-        html: govde,
-        attachments: [{ filename: String(eb.dosyaAdi || 'WE-Sigorta-Teklif.pdf').slice(0, 100), content: pdfB64 }]
-      };
-      if (process.env.EPOSTA_YANIT_ADRESI) istek.reply_to = process.env.EPOSTA_YANIT_ADRESI;
-      var cevap = await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: { 'Authorization': 'Bearer ' + process.env.RESEND_API_KEY, 'Content-Type': 'application/json' },
-        body: JSON.stringify(istek)
-      });
-      if (!cevap.ok) { console.error('Teklif e-postasi gonderilemedi:', cevap.status); return res.status(502).json({ ok: false }); }
-      res.json({ ok: true });
-    } catch (e) {
-      console.error('Teklif e-posta endpoint hatasi:', e);
-      res.status(500).json({ ok: false });
-    }
-  });
 
   return { musteriYazdiBildir, sonTeklifiBul };
 };
