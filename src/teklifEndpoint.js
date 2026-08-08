@@ -201,41 +201,46 @@ module.exports = function (app, pool) {
   // Ekibe (NOTIFY_NUMBER + varsa danışman) giden bildirimleri TEK bir yerden
   // yönetir - hem /api/teklif hem musteriYazdiBildir tarafından kullanılır.
   //
-  // 25.07.2026 eklemesi, 25.07.2026 GÜNCELLEMESİ (Enbel'in acik talebi -
-  // "24 saat olayini sikitriet, mesaj HER DURUMDA gitsin"): artik TEK
-  // degiskenli ({{detay}}), conversationEngine.js'teki AGENT_DETAY_TEMPLATE_NAME
-  // ile AYNI, KANITLANMIS deseni kullaniyoruz - zengin/detayli metnin
-  // TAMAMI tek bir sablon degiskenine gidiyor, boylece sablon HER SEFERINDE
-  // (24 saatlik pencere durumundan BAGIMSIZ) TAM bilgiyi iletebiliyor. Sablon
-  // basarili olursa BURADA DURULUR (ayni bilgiyi iki kez, hem sablon hem duz
-  // metin olarak gondermemek icin). Sablon basarisiz olursa/ayarlanmamissa
-  // (TEKLIF_EKIP_TEMPLATE_NAME bos ise) duz metne duser - bu durumda mesaj
-  // SADECE pencere acik olursa ulasir (bu yuzden sablonu ONAYLATIP
-  // TANIMLAMANIZ SART - aksi halde "her durumda ulassin" garantisi calismaz).
+  // 25.07.2026 eklemesi (Enbel'in o zamanki talebi - "24 saat olayini
+  // sikistiret, mesaj HER DURUMDA gitsin"): eskiden ÖNCE şablon deneniyor,
+  // sadece şablon başarısız olursa/tanımlı değilse düz metne düşülüyordu.
+  //
+  // 08.08.2026 DEĞİŞTİRİLDİ (Enbel'in yeni, açık talebi - "önce serbest
+  // metinle (satır satır) gönder, şablona SADECE metin gitmezse düş"): SIRA
+  // BİLİNÇLİ OLARAK TERSİNE ÇEVRİLDİ. Artık ÖNCE düz metin (mesajGonder)
+  // deneniyor - bu, ekip zaten bota düzenli yazdığı (24 saatlik pencere
+  // genelde açık olduğu) için çoğu zaman başarılı oluyor ve OKUNAKLI,
+  // SATIR SONLU orijinal formatta gidiyor. Düz metin BAŞARISIZ olursa (orn.
+  // o danışman/numara son 24 saattir bota hiç yazmadıysa, pencere kapalı)
+  // ANCAK O ZAMAN şablona (TEKLIF_EKIP_TEMPLATE_NAME tanımlıysa) düşülüyor -
+  // bu da "mesaj her durumda gitsin" garantisini KORUYOR, sadece hangisinin
+  // ÖNCELİKLİ denendiğini değiştiriyor. BU SIRALAMA BİLİNÇLİ BİR TERCİHTİR,
+  // gelecekte "şablon daha güvenilir" diye eskiye (şablon-önce) DÖNDÜRÜLMESİN.
   //
   // NOT (bicim farki): sablon PARAMETRESİ satir sonu iceremedigi icin
   // (yukarida sablonIcinTemizle), sablonla giden versiyon multi-line degil,
   // " • " ile ayrilmis TEK SATIR olarak gorunur (orn. "🔔 *Yeni Web
   // Teklifi!* • 👤 Ad: Haluk Levent • 📱 Tel: ..."). Bu, WhatsApp'in kendi
-  // teknik kisitlamasi - bu sablon disinda bir cozum yok. Pencere acikken
-  // giden duz metin versiyonu ise SIZIN VERDIGINIZ orijinal, satir sonlu
-  // formatta kalir - fakat sablon basarili oldugunda o zaten gonderilmiyor
-  // (tekrari onlemek icin), yani gunluk kullanimda EN SIK GORECEGINIZ format
-  // sablonun tek-satirlik hali olacak.
+  // teknik kisitlamasi - bu sablon disinda bir cozum yok. Duz metin
+  // basarili oldugunda (ARTIK cogunlukla bu olacak) bu sablon hic
+  // devreye girmiyor, mesaj SIZIN VERDIGINIZ orijinal, satir sonlu
+  // formatta gidiyor.
   async function ekibeBildirGonder(numara, zenginMetin) {
-    const sablonAdi = process.env.TEKLIF_EKIP_TEMPLATE_NAME;
-    if (sablonAdi) {
-      try {
-        await sablonGonder(numara, sablonAdi, { detay: sablonIcinTemizle(zenginMetin) });
-        return; // basarili - sablon zaten TUM detayi (mesaj) iletti
-      } catch (e) {
-        console.error('Ekip şablon bildirimi gönderilemedi (' + numara + '):', e.message);
-      }
-    }
     try {
       await mesajGonder(numara, zenginMetin);
+      return; // basarili - duz metin (satir sonlu, okunakli) gitti, sablona hic gerek yok
     } catch (e) {
-      console.error('Teklif bildirimi gönderilemedi (' + numara + '):', e.message);
+      console.error('Ekip bildirimi (düz metin) gönderilemedi, şablona düşülüyor (' + numara + '):', e.message);
+    }
+    const sablonAdi = process.env.TEKLIF_EKIP_TEMPLATE_NAME;
+    if (!sablonAdi) {
+      console.warn('TEKLIF_EKIP_TEMPLATE_NAME tanımlı değil - düz metin başarısız oldu ve şablon yedeği devreye giremedi, bildirim gitmedi (' + numara + ').');
+      return;
+    }
+    try {
+      await sablonGonder(numara, sablonAdi, { detay: sablonIcinTemizle(zenginMetin) });
+    } catch (e) {
+      console.error('Ekip şablon bildirimi de gönderilemedi (' + numara + '):', e.message);
     }
   }
 
